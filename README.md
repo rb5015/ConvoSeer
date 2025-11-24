@@ -43,7 +43,7 @@ ConvoSeer processes customer service conversations in real-time, analyzes sentim
          │
          ▼
 ┌─────────────────┐
-│ Embedder Worker │ ──► OpenAI embeddings (text-embedding-3-small)
+│ Embedder Worker │ ──► Gemini embeddings (gemini-embedding-001)
 └────────┬────────┘
          │
          ▼
@@ -67,7 +67,7 @@ ConvoSeer processes customer service conversations in real-time, analyzes sentim
 
 - **Streaming**: Apache Kafka, Spark Structured Streaming
 - **Storage**: MongoDB Atlas (vector search)
-- **ML/AI**: OpenAI Whisper (local), OpenAI GPT-4, text-embedding-3-small
+- **ML/AI**: OpenAI Whisper (local), OpenAI GPT-4, Gemini embeddings (gemini-embedding-001)
 - **Backend**: FastAPI (Python)
 - **Frontend**: Streamlit
 - **Infrastructure**: Docker Compose
@@ -79,7 +79,8 @@ ConvoSeer processes customer service conversations in real-time, analyzes sentim
 - Docker & Docker Compose
 - Python 3.8+
 - MongoDB Atlas account (free tier works)
-- OpenAI API key
+- Gemini API key (for embeddings) - get from https://aistudio.google.com/apikey
+- OpenAI API key (for generation model)
 
 ### 1. Clone and setup
 
@@ -91,7 +92,8 @@ cd ConvoSeer
 cp config/env.template .env
 
 # Edit .env with your credentials
-# - OPENAI_API_KEY
+# - GEMINI_API_KEY (for embeddings)
+# - OPENAI_API_KEY (for generation)
 # - MONGODB_URI
 ```
 
@@ -221,7 +223,9 @@ ConvoSeer/
 Required in `.env`:
 
 ```bash
-# OpenAI
+# Gemini API (for embeddings)
+GEMINI_API_KEY=...
+# OpenAI API (for generation)
 OPENAI_API_KEY=sk-...
 
 # MongoDB Atlas
@@ -235,7 +239,7 @@ KAFKA_TOPIC_RAW=calls.raw
 KAFKA_TOPIC_ENRICHED=calls.enriched
 
 # Models
-EMBEDDING_MODEL=text-embedding-3-small
+EMBEDDING_MODEL=gemini-embedding-001
 GENERATION_MODEL=gpt-4o-mini
 
 # Service URLs (for containers)

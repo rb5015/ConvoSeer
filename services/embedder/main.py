@@ -4,7 +4,8 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from cachetools import LRUCache
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-from openai import OpenAI, APIError, RateLimitError, APITimeoutError, APIConnectionError
+from google import genai
+from google.genai import types
 
 
 class EmbedRequest(BaseModel):
@@ -19,10 +20,10 @@ class EmbedResponse(BaseModel):
 
 app = FastAPI(title="Embedder Service", version="0.1.0")
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-DEFAULT_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+DEFAULT_MODEL = os.getenv("EMBEDDING_MODEL", "gemini-embedding-001")
 
-_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 _cache = LRUCache(maxsize=100_000)
 
 
@@ -39,19 +40,26 @@ def _normalize_text(text: str) -> str:
     reraise=True,
     stop=stop_after_attempt(5),
     wait=wait_exponential(multiplier=0.5, min=0.5, max=8),
-    retry=retry_if_exception_type((RateLimitError, APITimeoutError, APIConnectionError, APIError)),
+    retry=retry_if_exception_type((Exception,)),
 )
 def _embed_batch(texts: List[str], model: str) -> List[List[float]]:
-    assert _client is not None, "OpenAI client not initialized"
-    resp = _client.embeddings.create(model=model, input=texts)
-    # OpenAI returns vectors in resp.data[i].embedding
-    return [d.embedding for d in resp.data]
+    assert _client is not None, "Gemini client not initialized"
+    # Gemini API supports batch embedding with task_type for optimization
+    result = _client.models.embed_content(
+        model=model,
+        contents=texts,
+        config=types.EmbedContentConfig(
+            task_type="SEMANTIC_SIMILARITY"
+        )
+    )
+    # Gemini returns vectors in result.embeddings[i].values
+    return [list(emb.values) for emb in result.embeddings]
 
 
 @app.post("/embed", response_model=EmbedResponse)
 def embed(req: EmbedRequest) -> Any:
     if not _client:
-        raise HTTPException(status_code=500, detail="OpenAI not configured")
+        raise HTTPException(status_code=500, detail="Gemini not configured")
     model = req.model or DEFAULT_MODEL
     inputs = [ _normalize_text(t or "") for t in req.texts ]
 
