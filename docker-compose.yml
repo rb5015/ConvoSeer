@@ -26,26 +26,33 @@ services:
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
 
   spark-master:
-    image: bitnami/spark:3.5
+    image: apache/spark-py:v3.5.0
     container_name: spark-master
+    command: bin/spark-class org.apache.spark.deploy.master.Master
     environment:
-      - SPARK_MODE=master
+      - SPARK_MASTER_HOST=spark-master
+      - SPARK_MASTER_PORT=7077
+      - SPARK_MASTER_WEBUI_PORT=8080
     ports:
       - "7077:7077"
       - "8080:8080"
+    volumes:
+      - ./streaming:/opt/spark/work-dir
 
   spark-worker:
-    image: bitnami/spark:3.5
+    image: apache/spark-py:v3.5.0
     container_name: spark-worker
-    depends_on:
-      - spark-master
+    command: bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
     environment:
-      - SPARK_MODE=worker
-      - SPARK_MASTER_URL=spark://spark-master:7077
-      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_MEMORY=2g
       - SPARK_WORKER_CORES=2
+      - SPARK_WORKER_WEBUI_PORT=8081
     ports:
       - "8081:8081"
+    depends_on:
+      - spark-master
+    volumes:
+      - ./streaming:/opt/spark/work-dir
 
   embedder:
     build: ./services/embedder
