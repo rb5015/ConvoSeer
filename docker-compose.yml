@@ -83,6 +83,45 @@ services:
     depends_on:
       - kafka
 
+  rag-stream-worker:
+    build: ./services/rag
+    container_name: rag-stream-worker
+    env_file:
+      - .env
+    command: ["python", "stream_worker.py"]
+    depends_on:
+      - kafka
+      - rag
+
+  stream:
+    build: ./services/stream
+    container_name: stream-api
+    env_file:
+      - .env
+    ports:
+      - "8003:8003"
+    depends_on:
+      - kafka
+
+  audio-service:
+    build: ./services/audio
+    container_name: audio-service
+    env_file:
+      - .env
+    ports:
+      - "8004:8004"
+    depends_on:
+      - kafka
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
+    restart: unless-stopped
+    mem_limit: 4g
+    memswap_limit: 4g
+
   ui:
     build: ./ui
     container_name: agent-assist-ui
@@ -92,6 +131,8 @@ services:
       - "8501:8501"
     depends_on:
       - rag
+      - stream
+      - audio-service
 
   kafka-ui:
     image: provectuslabs/kafka-ui:latest

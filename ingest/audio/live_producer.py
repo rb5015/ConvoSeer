@@ -34,7 +34,7 @@ class LiveTranscriptionProducer:
         self,
         kafka_brokers: str,
         kafka_topic: str,
-        whisper_model: str = "base",
+        whisper_model: str = "tiny",
         call_id: Optional[str] = None,
         speaker_role: str = "customer",
         chunk_duration: float = 5.0,
@@ -83,11 +83,16 @@ class LiveTranscriptionProducer:
             
             # Create utterance record
             elapsed_ms = int((time.time() - self.start_time) * 1000)
+            current_timestamp = int(time.time() * 1000)  # Unix timestamp in ms
+            chunk_id = uuid.uuid4().hex[:8]
+            
             utterance = {
                 "call_id": self.call_id,
-                "utterance_id": f"{self.call_id}:{self.utterance_index}:{uuid.uuid4().hex[:8]}",
+                "utterance_id": f"{self.call_id}:{self.utterance_index}:{chunk_id}",
                 "utterance_index": self.utterance_index,
                 "timestamp_ms": elapsed_ms,
+                "event_time": current_timestamp,  # For windowing
+                "chunk_id": chunk_id,
                 "speaker_role": self.speaker_role,
                 "text": result.text,
                 "metadata": {
@@ -95,6 +100,7 @@ class LiveTranscriptionProducer:
                     "whisper_model": self.transcriber.model_size,
                     "transcription_duration": result.duration,
                     "language": result.language,
+                    "audio_energy": float(np.abs(audio).mean()),  # Lightweight voice energy
                 },
             }
             

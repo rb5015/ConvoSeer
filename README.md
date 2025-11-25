@@ -105,6 +105,7 @@ docker compose up -d zookeeper kafka spark-master spark-worker
 ### 3. Setup MongoDB Atlas
 
 Follow instructions in `config/mongodb/SETUP.md`:
+
 1. Create free cluster
 2. Create database `agent_assist` and collection `utterances`
 3. Get connection string
@@ -209,10 +210,13 @@ ConvoSeer/
 6. **MongoDB** (with embeddings) → RAG service
 7. **UI** (agent suggestions)
 
-### Live Streaming (Real-time)
+### Live Streaming (Real-time with ~10s windows)
 
-1. **Microphone** → Whisper transcription
-2. **Kafka** (calls.raw) → [same as above from step 4]
+1. **Microphone** → Whisper transcription → `calls.raw`
+2. **Spark Streaming** → Text cleaning + sentiment → `calls.enriched` + `calls.sentiment` (windowed)
+3. **RAG Stream Worker** → Consumes sentiment windows → Calls RAG service → `calls.rag`
+4. **Stream API** → SSE endpoint → **Live UI** (real-time updates)
+5. **Embedder worker** → Stores enriched data in MongoDB
 
 ## Configuration
 
@@ -233,6 +237,11 @@ MONGODB_COLLECTION=utterances
 KAFKA_BROKERS=kafka:29092
 KAFKA_TOPIC_RAW=calls.raw
 KAFKA_TOPIC_ENRICHED=calls.enriched
+KAFKA_TOPIC_SENTIMENT=calls.sentiment
+KAFKA_TOPIC_RAG=calls.rag
+
+# Streaming Window Settings
+STREAM_WINDOW_SECONDS=10
 
 # Models
 EMBEDDING_MODEL=gemini-embedding-001
@@ -241,6 +250,7 @@ GENERATION_MODEL=gemini-2.0-flash
 # Service URLs (for containers)
 EMBEDDER_URL=http://embedder:8000
 RAG_URL=http://rag:8000
+STREAM_URL=http://stream:8003
 ```
 
 ### Ports
@@ -253,6 +263,7 @@ RAG_URL=http://rag:8000
 - 8081: Spark worker UI
 - 8001: Embedder API
 - 8002: RAG API
+- 8003: Stream API (SSE)
 - 8501: Streamlit UI
 - 8085: Kafka UI
 
@@ -316,6 +327,7 @@ Check OpenAI API key in `.env` and ensure MongoDB is accessible.
 ### Spark job fails
 
 Ensure Kafka package is included:
+
 ```bash
 --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0
 ```
@@ -346,6 +358,7 @@ Ensure Kafka package is included:
 ## Dataset
 
 Using AIxBlock 92k Call Center Transcripts:
+
 - https://huggingface.co/datasets/AIxBlock/92k-real-world-call-center-scripts-english
 - 92,000 real customer service conversations
 - Multiple industries: insurance, healthcare, telecom, automotive
@@ -379,4 +392,3 @@ Contributions welcome! Please open an issue or PR.
 ## Contact
 
 For questions or support, open an issue on GitHub.
-
