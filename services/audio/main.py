@@ -125,7 +125,7 @@ def get_whisper_model():
             
             # Load faster-whisper model - more stable on ARM64
             _whisper_model = WhisperModel(
-                WHISPER_MODEL_SIZE,
+                WHISPER_MODEL_SIZE, 
                 device=device,
                 compute_type=compute_type,
                 num_workers=1,  # Single worker for stability
@@ -426,7 +426,7 @@ async def transcribe_audio(
             raise HTTPException(
                 status_code=500,
                 detail="Insufficient memory for transcription. Please send smaller audio chunks."
-            )
+        )
         else:
             print(f"❌ Runtime error: {e}")
             import traceback

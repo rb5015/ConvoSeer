@@ -29,6 +29,7 @@ KAFKA_BROKERS = os.getenv("KAFKA_BROKERS", "localhost:9092")
 SENTIMENT_TOPIC = os.getenv("KAFKA_TOPIC_SENTIMENT", "calls.sentiment")
 RAG_TOPIC = os.getenv("KAFKA_TOPIC_RAG", "calls.rag")
 ENRICHED_TOPIC = os.getenv("KAFKA_TOPIC_ENRICHED", "calls.enriched")
+RAW_TOPIC = os.getenv("KAFKA_TOPIC_RAW", "calls.raw")
 
 # Global queues for streaming updates
 sentiment_queues: Dict[str, queue.Queue] = {}
@@ -85,27 +86,34 @@ def rag_consumer_thread():
 
 
 def transcription_consumer_thread():
-    """Background thread to consume transcription updates from enriched topic."""
-    consumer = KafkaConsumer(
-        ENRICHED_TOPIC,
-        bootstrap_servers=KAFKA_BROKERS,
-        auto_offset_reset="latest",
-        enable_auto_commit=True,
-        value_deserializer=lambda m: json.loads(m.decode("utf-8")),
-        key_deserializer=lambda m: m.decode("utf-8") if m else None,
-        group_id="stream-api-transcription"
-    )
-    
-    for message in consumer:
-        call_id = message.key
-        data = message.value
+    """Background thread to consume transcription updates from raw and enriched topics."""
+    # Try enriched topic first, fall back to raw topic
+    try:
+        consumer = KafkaConsumer(
+            ENRICHED_TOPIC,
+            RAW_TOPIC,  # Also consume from raw topic for immediate transcriptions
+            bootstrap_servers=KAFKA_BROKERS,
+            auto_offset_reset="latest",
+            enable_auto_commit=True,
+            value_deserializer=lambda m: json.loads(m.decode("utf-8")),
+            key_deserializer=lambda m: m.decode("utf-8") if m else None,
+            group_id="stream-api-transcription"
+        )
         
-        # Broadcast to all queues for this call_id
-        if call_id in transcription_queues:
-            try:
-                transcription_queues[call_id].put_nowait(data)
-            except queue.Full:
-                pass  # Drop if queue is full
+        print(f"✅ Transcription consumer connected to topics: {ENRICHED_TOPIC}, {RAW_TOPIC}")
+        
+        for message in consumer:
+            call_id = message.key
+            data = message.value
+            
+            # Broadcast to all queues for this call_id
+            if call_id in transcription_queues:
+                try:
+                    transcription_queues[call_id].put_nowait(data)
+                except queue.Full:
+                    pass  # Drop if queue is full
+    except Exception as e:
+        print(f"❌ Error in transcription consumer: {e}")
 
 
 @app.on_event("startup")

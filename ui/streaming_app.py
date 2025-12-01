@@ -80,6 +80,10 @@ st.markdown("""
         background-color: white;
         border-radius: 0.25rem;
         box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        color: #333;
+    }
+    .utterance-item strong {
+        color: #555;
     }
     .utterance-item:hover {
         box-shadow: 0 2px 6px rgba(0,0,0,0.15);
@@ -309,87 +313,160 @@ with col1:
     # Audio recorder (only show when recording)
     if st.session_state.get('is_recording'):
         st.caption("🎤 Recording... Speak clearly. Audio chunks are automatically sent every 2-3 seconds.")
+        
+        # Create empty placeholders for status messages (to avoid reruns)
+        status_placeholder = st.empty()
+        audio_info_placeholder = st.empty()
+        
         audio_bytes = audio_recorder(
             text="",
             recording_color="#ff4444",
             neutral_color="#888",
             icon_name="microphone",
             icon_size="3x",
-            pause_threshold=2.0,  # Reduced from 3.0 to send chunks more frequently
+            pause_threshold=2.0,
+            key="audio_recorder_main"  # Fixed key to maintain state
         )
         
-        # Debug info
+        # Store audio buffer
         if audio_bytes:
-            audio_size_mb = len(audio_bytes) / (1024 * 1024)
-            st.caption(f"📊 Audio chunk size: {len(audio_bytes):,} bytes ({audio_size_mb:.2f} MB)")
+            audio_hash = hash(audio_bytes)
+            # Only update buffer if it's different from last sent audio
+            if audio_hash != st.session_state.get('last_audio_hash'):
+                st.session_state['audio_buffer'] = audio_bytes
+                st.session_state['audio_buffer_hash'] = audio_hash
+                audio_size_mb = len(audio_bytes) / (1024 * 1024)
+                audio_info_placeholder.caption(f"📊 New audio buffer: {len(audio_bytes):,} bytes ({audio_size_mb:.2f} MB)")
+            else:
+                audio_info_placeholder.caption(f"📊 Audio buffer unchanged (same as last)")
         
-        # Process audio chunk automatically (every 2+ seconds or when new audio detected)
+        # Process audio chunk automatically (every 2.5+ seconds or when new audio detected)
         current_time = time.time()
-        audio_hash = hash(audio_bytes) if audio_bytes else None
+        time_since_last_send = current_time - st.session_state.get('last_audio_send', 0)
+        streaming_interval = st.session_state.get('streaming_interval', 2.5)
         
-        # Maximum audio size (5MB = 5 * 1024 * 1024 bytes)
-        MAX_AUDIO_SIZE = 5 * 1024 * 1024
+        # Check if it's time to send audio chunk AND we have new audio
+        buffer_hash = st.session_state.get('audio_buffer_hash')
+        last_sent_hash = st.session_state.get('last_audio_hash')
+        has_new_audio = buffer_hash and buffer_hash != last_sent_hash
         
-        # Check if we have new audio to send
-        if audio_bytes and audio_hash != st.session_state.get('last_audio_hash'):
+        if st.session_state.get('audio_buffer') and time_since_last_send >= streaming_interval and has_new_audio:
+            audio_bytes_to_send = st.session_state['audio_buffer']
+            audio_hash = buffer_hash
+            
+            # Maximum audio size (5MB = 5 * 1024 * 1024 bytes)
+            MAX_AUDIO_SIZE = 5 * 1024 * 1024
+            
             # Validate audio size before sending
-            if len(audio_bytes) < 100:
-                st.warning(f"⚠️ Audio chunk too small ({len(audio_bytes)} bytes). Please speak louder or check your microphone.")
-                st.caption("💡 Tip: The audio recorder needs at least 2 seconds of continuous speech.")
-            elif len(audio_bytes) > MAX_AUDIO_SIZE:
-                st.error(f"⚠️ Audio chunk too large ({len(audio_bytes) / (1024 * 1024):.2f} MB). Maximum is 5 MB.")
-                st.caption("💡 Tip: The audio recorder accumulated too much audio. Please pause briefly between sentences.")
-                # Reset the hash so we don't keep showing this error
-                st.session_state['last_audio_hash'] = audio_hash
-            # Wait a bit to ensure we have a complete chunk (reduced to 2 seconds)
-            elif current_time - st.session_state['last_audio_send'] > 2:
-                with st.spinner("🔄 Transcribing audio chunk..."):
-                    audio_size_mb = len(audio_bytes) / (1024 * 1024)
-                    st.caption(f"Sending {len(audio_bytes):,} bytes ({audio_size_mb:.2f} MB) to backend...")
+            if len(audio_bytes_to_send) < 100:
+                status_placeholder.caption("⏳ Waiting for more audio...")
+            elif len(audio_bytes_to_send) > MAX_AUDIO_SIZE:
+                status_placeholder.warning(f"⚠️ Audio chunk too large ({len(audio_bytes_to_send) / (1024 * 1024):.2f} MB). Truncating...")
+                st.session_state['audio_buffer'] = None
+                st.session_state['last_audio_send'] = current_time
+            else:
+                # Send audio chunk
+                try:
+                    audio_size_mb = len(audio_bytes_to_send) / (1024 * 1024)
+                    status_placeholder.caption(f"🔄 Sending {len(audio_bytes_to_send):,} bytes ({audio_size_mb:.2f} MB) to backend...")
+                    
                     result = send_audio_chunk(
-                        audio_bytes,
+                        audio_bytes_to_send,
                         st.session_state['call_id'],
                         st.session_state['utterance_index']
                     )
                     
                     if result and result.get('published') and result.get('text'):
+                        # Add transcription directly to UI
+                        transcription = {
+                            'text': result.get('text', ''),
+                            'utterance_id': result.get('utterance_id', f"{st.session_state['call_id']}:{st.session_state['utterance_index']}"),
+                            'timestamp': datetime.now().strftime("%H:%M:%S"),
+                            'index': st.session_state['utterance_index'],
+                            'sentiment': 'NEU'
+                        }
+                        st.session_state['transcriptions'].append(transcription)
+                        if len(st.session_state['transcriptions']) > 100:
+                            st.session_state['transcriptions'] = st.session_state['transcriptions'][-100:]
+                        
                         st.session_state['utterance_index'] += 1
                         st.session_state['last_audio_send'] = current_time
                         st.session_state['last_audio_hash'] = audio_hash
-                        st.success(f"✓ Sent: \"{result['text'][:50]}...\"")
-                        # Transcription will also appear via SSE stream
+                        st.session_state['audio_buffer'] = None
+                        st.session_state['audio_buffer_hash'] = None
+                        status_placeholder.success(f"✓ Sent: \"{result['text'][:50]}{'...' if len(result['text']) > 50 else ''}\"")
+                        # Trigger rerun only after successful send to update transcription window
+                        time.sleep(0.5)  # Brief delay to show success message
+                        st.rerun()
                     elif result and result.get('text'):
-                        st.warning("Transcribed but not published to Kafka")
+                        status_placeholder.warning("⚠️ Transcribed but not published to Kafka")
+                        st.session_state['last_audio_send'] = current_time
+                        st.session_state['last_audio_hash'] = audio_hash
+                        st.session_state['audio_buffer'] = None
+                        st.session_state['audio_buffer_hash'] = None
                     elif result is None:
-                        st.error("❌ Failed to send audio. Check backend logs.")
-                        st.caption("💡 Check: Is the audio service running? Run: docker compose logs -f audio-service")
+                        status_placeholder.error("❌ Failed to send audio. Retrying...")
+                        st.session_state['audio_buffer'] = None
+                        st.session_state['audio_buffer_hash'] = None
                     else:
-                        st.info("No speech detected in this chunk. Try speaking more clearly.")
+                        status_placeholder.info("ℹ️ No speech detected. Waiting for speech...")
+                        st.session_state['last_audio_send'] = current_time
+                        st.session_state['last_audio_hash'] = audio_hash
+                        st.session_state['audio_buffer'] = None
+                        st.session_state['audio_buffer_hash'] = None
+                except Exception as e:
+                    status_placeholder.error(f"❌ Error: {str(e)[:50]}")
+                    st.session_state['last_audio_send'] = current_time
     
-    # Transcription window (scrolling)
-    st.markdown('<div class="transcription-window">', unsafe_allow_html=True)
+    # Transcription window (scrolling) - use empty placeholder for dynamic updates
+    transcription_window_placeholder = st.empty()
     
-    if st.session_state['transcriptions']:
-        for trans in st.session_state['transcriptions']:
-            # Determine sentiment class
-            sentiment = trans.get('sentiment', 'NEU')
-            if sentiment == 'POS':
-                sentiment_class = "sentiment-positive"
-            elif sentiment == 'NEG':
-                sentiment_class = "sentiment-negative"
-            else:
-                sentiment_class = "sentiment-neutral"
-            
-            st.markdown(f"""
-            <div class="utterance-item {sentiment_class}">
-                <strong>[{trans['timestamp']}]</strong> {trans['text']}
+    with transcription_window_placeholder.container():
+        transcriptions_html = '<div id="transcription-window" class="transcription-window">'
+        
+        if st.session_state['transcriptions']:
+            for trans in st.session_state['transcriptions']:
+                # Determine sentiment class
+                sentiment = trans.get('sentiment', 'NEU')
+                if sentiment == 'POS':
+                    sentiment_class = "sentiment-positive"
+                elif sentiment == 'NEG':
+                    sentiment_class = "sentiment-negative"
+                else:
+                    sentiment_class = "sentiment-neutral"
+                
+                text = trans.get('text', '')
+                timestamp = trans.get('timestamp', 'N/A')
+                
+                transcriptions_html += f"""
+                <div class="utterance-item {sentiment_class}">
+                    <strong>[{timestamp}]</strong> {text}
+                </div>
+                """
+        else:
+            transcriptions_html += '''
+            <div style="padding: 2rem; text-align: center; color: #666;">
+                No transcriptions yet. Start recording to begin.
+                <br><small>Transcriptions will appear here as audio is processed...</small>
             </div>
-            """, unsafe_allow_html=True)
-    else:
-        st.info("No transcriptions yet. Start recording to begin.")
-        st.caption("Transcriptions will appear here as audio is processed...")
-    
-    st.markdown('</div>', unsafe_allow_html=True)
+            '''
+        
+        transcriptions_html += '</div>'
+        
+        # Auto-scroll script
+        current_count = len(st.session_state['transcriptions'])
+        if current_count > st.session_state.get('last_transcription_count', 0):
+            st.session_state['last_transcription_count'] = current_count
+            transcriptions_html += '''
+            <script>
+                setTimeout(function() {
+                    const el = document.getElementById('transcription-window');
+                    if (el) el.scrollTop = el.scrollHeight;
+                }, 100);
+            </script>
+            '''
+        
+        st.markdown(transcriptions_html, unsafe_allow_html=True)
 
 with col2:
     st.subheader("📊 Sentiment Analysis")
@@ -469,9 +546,9 @@ with col3:
         st.info("Waiting for suggestions...")
         st.caption("Suggestions appear every ~10 seconds after transcription")
 
-# Auto-refresh when recording (every 1.5 seconds for real-time feel)
+# Auto-refresh when recording (every 2 seconds to avoid disrupting audio recorder)
 if st.session_state.get('is_recording'):
-    time.sleep(1.5)
+    time.sleep(2.0)
     st.rerun()
 
 # Footer with connection status
