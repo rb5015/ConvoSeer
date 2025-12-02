@@ -72,6 +72,15 @@ services:
     depends_on:
       - kafka
       - embedder
+  chunk-worker:
+    build: ./services/embedder
+    container_name: chunk-worker
+    env_file:
+      - .env
+    command: ["python", "chunk_worker.py"]
+    depends_on:
+      - kafka
+      - embedder
 
   rag:
     build: ./services/rag

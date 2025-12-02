@@ -31,8 +31,8 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 EMBEDDER_URL = os.getenv("EMBEDDER_URL", "http://embedder:8000")
 GENERATION_MODEL = os.getenv("GENERATION_MODEL", "gemini-2.0-flash")
 MONGODB_URI = os.getenv("MONGODB_URI", "")
-MONGODB_DB = os.getenv("MONGODB_DB", "agent_assist")
-MONGODB_COLLECTION = os.getenv("MONGODB_COLLECTION", "utterances")
+MONGODB_DB = os.getenv("MONGODB_DB", "my_database")
+MONGODB_COLLECTION = os.getenv("MONGODB_COLLECTION", "call_chunks")
 
 _client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 _mongo: Optional[MongoClient] = MongoClient(MONGODB_URI) if MONGODB_URI else None
@@ -70,7 +70,7 @@ def _vector_search(query_vec: List[float], k: int, filters: Optional[Dict[str, A
         return []
     vector_stage: Dict[str, Any] = {
         "$vectorSearch": {
-            "index": "vector_index",
+            "index": "embedding_index",
             "path": "embedding",
             "queryVector": query_vec,
             "numCandidates": max(100, k * 20),
@@ -84,10 +84,12 @@ def _vector_search(query_vec: List[float], k: int, filters: Optional[Dict[str, A
     project_stage = {
         "$project": {
             "_id": 0,
-            "text": 1,
-            "speaker_role": 1,
-            "metadata": 1,
+            "filename": 1,
+            "full_text": 1,
+            "chunk_id": 1,
+            "chunk_text": 1,
             "sentiment": 1,
+            "product": 1,
             "score": {"$meta": "vectorSearchScore"},
         }
     }
@@ -103,8 +105,19 @@ def assist(req: AssistRequest) -> Any:
     retrieved = _vector_search(qvec, req.k, req.filters or {})
     # Determine sentiment label from first retrieved (fallback to NEU)
     sentiment_label = "NEU"
-    if retrieved and isinstance(retrieved[0].get("sentiment"), dict):
-        sentiment_label = retrieved[0]["sentiment"].get("label", "NEU")
+    if retrieved:
+        sent = retrieved[0].get("sentiment", "neutral")
+        if isinstance(sent, dict):
+            sentiment_label = sent.get("label", "NEU")
+        else:
+            # Map string sentiment to label format
+            sent_str = str(sent).lower()
+            if "positive" in sent_str:
+                sentiment_label = "POS"
+            elif "negative" in sent_str:
+                sentiment_label = "NEG"
+            else:
+                sentiment_label = "NEU"
     user_prompt = build_user_prompt(req.latest_utterance, retrieved, sentiment_label)
 
     if not _client:

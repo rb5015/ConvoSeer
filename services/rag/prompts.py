@@ -10,11 +10,16 @@ ASSIST_SYSTEM_PROMPT = (
 def build_user_prompt(latest_utterance: str, retrieved: List[Dict], sentiment_label: str) -> str:
     context_lines = []
     for i, doc in enumerate(retrieved[:8], start=1):
-        txt = doc.get("text", "")
-        role = doc.get("speaker_role", "unknown")
-        s = doc.get("sentiment", {})
-        s_lab = s.get("label")
-        context_lines.append(f"{i}. [{role}][{s_lab}] {txt}")
+        # Support both old schema (text) and new schema (chunk_text)
+        txt = doc.get("chunk_text") or doc.get("text", "")
+        product = doc.get("product", "UNKNOWN")
+        s = doc.get("sentiment", "neutral")
+        # Handle both string and dict sentiment formats
+        if isinstance(s, dict):
+            s_lab = s.get("label", "neutral")
+        else:
+            s_lab = str(s).lower()
+        context_lines.append(f"{i}. [{product}][{s_lab}] {txt}")
     context = "\n".join(context_lines) if context_lines else "No similar utterances found."
     tone = "empathetic and reassuring" if sentiment_label == "NEG" else "confident and friendly"
     return (

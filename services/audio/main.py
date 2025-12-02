@@ -194,19 +194,108 @@ async def transcribe_audio(
                 detail=f"Audio file too large ({len(audio_bytes) / 1024 / 1024:.1f}MB). Maximum size is 5MB. Please send smaller chunks (recommended: 3-10 seconds of audio)."
             )
         
-        # Save to temporary file
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+        # Detect audio format from content_type or filename
+        content_type = audio_file.content_type or ""
+        filename = audio_file.filename or ""
+        
+        # Determine file extension based on content type or filename
+        if "webm" in content_type.lower() or filename.endswith(".webm"):
+            file_ext = ".webm"
+        elif "mp4" in content_type.lower() or filename.endswith(".mp4") or filename.endswith(".m4a"):
+            file_ext = ".mp4"
+        elif "wav" in content_type.lower() or filename.endswith(".wav"):
+            file_ext = ".wav"
+        elif "ogg" in content_type.lower() or filename.endswith(".ogg"):
+            file_ext = ".ogg"
+        else:
+            # Default to webm if unknown (most browsers use webm)
+            file_ext = ".webm"
+            print(f"⚠️  Unknown audio format, defaulting to .webm (content_type: {content_type}, filename: {filename})")
+        
+        # Save to temporary file with correct extension
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp:
             tmp.write(audio_bytes)
             tmp_path = tmp.name
         
-        print(f"💾 Saved audio to temp file: {tmp_path}")
+        print(f"💾 Saved audio to temp file: {tmp_path} (format: {file_ext}, content_type: {content_type})")
         
         # Track original file path for cleanup
         original_tmp_path = tmp_path
+        converted_path = None
         
         try:
             # Load and transcribe with thread safety
             print(f"🎤 Starting transcription for {len(audio_bytes)} byte audio file...")
+            
+            # Convert to WAV format if not already WAV (faster-whisper works best with WAV)
+            if file_ext != ".wav":
+                print(f"🔄 Converting {file_ext} to WAV format...")
+                try:
+                    # First, validate the input file with ffprobe
+                    probe_result = subprocess.run(
+                        ["ffprobe", "-v", "error", "-i", tmp_path],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                    
+                    if probe_result.returncode != 0:
+                        error_msg = probe_result.stderr or "Unknown error"
+                        print(f"❌ Input file validation failed: {error_msg}")
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Invalid audio file format. The audio chunk may be incomplete or corrupted. Error: {error_msg[:100]}"
+                        )
+                    
+                    converted_path = tmp_path + "_converted.wav"
+                    convert_result = subprocess.run(
+                        [
+                            "ffmpeg", "-i", tmp_path,
+                            "-acodec", "pcm_s16le",  # 16-bit PCM
+                            "-ar", "16000",  # 16kHz sample rate (Whisper standard)
+                            "-ac", "1",  # Mono channel
+                            "-y",  # Overwrite output file
+                            converted_path
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                        check=True,
+                    )
+                    
+                    # Verify converted file exists and has content
+                    if not os.path.exists(converted_path) or os.path.getsize(converted_path) == 0:
+                        raise HTTPException(
+                            status_code=500,
+                            detail="Audio conversion produced empty file"
+                        )
+                    
+                    print(f"✓ Audio converted to WAV: {converted_path} ({os.path.getsize(converted_path)} bytes)")
+                    # Use converted file for transcription
+                    tmp_path = converted_path
+                except subprocess.TimeoutExpired:
+                    print(f"❌ ffmpeg conversion timed out")
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Audio conversion timed out. The audio chunk may be too large or corrupted."
+                    )
+                except subprocess.CalledProcessError as e:
+                    error_msg = e.stderr or e.stdout or "Unknown error"
+                    print(f"❌ ffmpeg conversion failed: {error_msg[:200]}")
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Failed to convert audio format. The audio chunk may be incomplete or corrupted. Error: {error_msg[:100]}"
+                    )
+                except HTTPException:
+                    raise  # Re-raise HTTP exceptions
+                except Exception as e:
+                    print(f"❌ Error during conversion: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Audio conversion error: {str(e)[:100]}"
+                    )
             
             # Validate audio file and get duration
             try:
@@ -222,7 +311,13 @@ async def transcribe_audio(
                     )
                     duration_seconds = float(probe_result.stdout.strip())
                     print(f"✓ Audio validated: ~{duration_seconds:.1f} seconds")
-                except:
+                except subprocess.CalledProcessError as e:
+                    print(f"⚠️  ffprobe failed: {e.stderr}")
+                    # Fallback: estimate from file size (rough approximation)
+                    file_size_mb = len(audio_bytes) / (1024 * 1024)
+                    duration_seconds = file_size_mb * 0.5  # Rough estimate: 0.5 seconds per MB
+                    print(f"✓ Audio validated: ~{duration_seconds:.1f} seconds (estimated)")
+                except Exception as e:
                     # Fallback: estimate from file size (rough approximation)
                     file_size_mb = len(audio_bytes) / (1024 * 1024)
                     duration_seconds = file_size_mb * 0.5  # Rough estimate: 0.5 seconds per MB
@@ -391,11 +486,14 @@ async def transcribe_audio(
             )
             
         finally:
-            # Cleanup temp files (original and trimmed if created)
+            # Cleanup temp files (original, converted, and trimmed if created)
             # os is already imported at the top of the file
             files_to_cleanup = [original_tmp_path]
+            # If we created a converted file, clean it up too
+            if converted_path and os.path.exists(converted_path):
+                files_to_cleanup.append(converted_path)
             # If we created a trimmed file, clean it up too
-            if tmp_path != original_tmp_path and os.path.exists(tmp_path):
+            if tmp_path != original_tmp_path and tmp_path != converted_path and os.path.exists(tmp_path):
                 files_to_cleanup.append(tmp_path)
             
             for file_path in files_to_cleanup:
