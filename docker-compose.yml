@@ -72,15 +72,17 @@ services:
     depends_on:
       - kafka
       - embedder
-  chunk-worker:
-    build: ./services/embedder
-    container_name: chunk-worker
-    env_file:
-      - .env
-    command: ["python", "chunk_worker.py"]
-    depends_on:
-      - kafka
-      - embedder
+  # chunk-worker: DISABLED - Database at storage limit, using existing 21,685 indexed documents only
+  # To re-enable: uncomment below and restart
+  # chunk-worker:
+  #   build: ./services/embedder
+  #   container_name: chunk-worker
+  #   env_file:
+  #     - .env
+  #   command: ["python", "chunk_worker.py"]
+  #   depends_on:
+  #     - kafka
+  #     - embedder
 
   rag:
     build: ./services/rag
