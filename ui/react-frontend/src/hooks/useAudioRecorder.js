@@ -14,7 +14,6 @@ export function useAudioRecorder(intervalMs = 2500) {
   const streamRef = useRef(null);
   const dataRequestIntervalRef = useRef(null);
   const processIntervalRef = useRef(null);
-  const lastSentHashRef = useRef(null);
   const mimeTypeRef = useRef(null);
   const recorderOptionsRef = useRef(null);
 
@@ -71,19 +70,15 @@ export function useAudioRecorder(intervalMs = 2500) {
         if (audioChunksRef.current.length > 0) {
           const completeBlob = new Blob(audioChunksRef.current, { type: mimeTypeRef.current });
           
-          // Minimum size check - for 2.5 seconds of WebM audio, expect at least 5KB
-          // WebM compressed audio at 16kHz should be roughly 5-20KB for 2-3 seconds
-          const MIN_CHUNK_SIZE = 5000; // 5KB minimum for meaningful audio
+          // Minimum size check - for 6 seconds of WebM audio, expect at least 10KB
+          // WebM compressed audio at 16kHz should be roughly 10-40KB for 5-6 seconds
+          const MIN_CHUNK_SIZE = 10000; // 10KB minimum for meaningful audio
           if (completeBlob.size >= MIN_CHUNK_SIZE) {
-            // Create a hash to detect if audio has changed
-            const hash = `${completeBlob.size}`;
-            
-            // Only update if audio has changed (size increased)
-            if (hash !== lastSentHashRef.current && completeBlob.size > (lastSentHashRef.current ? parseInt(lastSentHashRef.current) : 0)) {
-              lastSentHashRef.current = hash;
-              setAudioBlob(completeBlob);
-              console.log(`📊 Audio chunk ready: ${completeBlob.size} bytes (${(completeBlob.size / 1024).toFixed(2)} KB)`);
-            }
+            // Use timestamp to ensure each chunk is unique
+            // This allows chunks of similar size to still be sent
+            const chunkId = Date.now();
+            setAudioBlob(completeBlob);
+            console.log(`📊 Audio chunk ready: ${completeBlob.size} bytes (${(completeBlob.size / 1024).toFixed(2)} KB) [chunk ${chunkId}]`);
           } else {
             console.log(`⚠️ Audio chunk too small: ${completeBlob.size} bytes (${(completeBlob.size / 1024).toFixed(2)} KB), skipping`);
           }
@@ -163,7 +158,6 @@ export function useAudioRecorder(intervalMs = 2500) {
     
     setIsRecording(false);
     setAudioBlob(null);
-    lastSentHashRef.current = null;
   }, []);
 
   // Cleanup on unmount

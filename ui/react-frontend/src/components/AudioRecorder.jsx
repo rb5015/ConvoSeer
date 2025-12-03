@@ -1,14 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
 import { useAudioUpload } from '../hooks/useAudioUpload';
 
 export function AudioRecorder({ callId, onTranscription, onRecordingChange }) {
   const [utteranceIndex, setUtteranceIndex] = useState(0);
   const [statusMessage, setStatusMessage] = useState('');
-  const [lastSentHash, setLastSentHash] = useState(null);
+  const lastSentBlobRef = useRef(null);
   
-  // Use 3 seconds interval to capture more audio per chunk
-  const { isRecording, audioBlob, error: recorderError, startRecording, stopRecording } = useAudioRecorder(3000);
+  // Use 6 seconds interval to capture longer audio chunks
+  const { isRecording, audioBlob, error: recorderError, startRecording, stopRecording } = useAudioRecorder(6000);
   const { uploadAudio, uploading, error: uploadError } = useAudioUpload();
 
   // Notify parent of recording state changes
@@ -20,25 +20,32 @@ export function AudioRecorder({ callId, onTranscription, onRecordingChange }) {
 
   // Handle audio blob changes and upload
   useEffect(() => {
-    if (!isRecording || !audioBlob || uploading) return;
+    if (!isRecording || !audioBlob) {
+      return;
+    }
+    
+    if (uploading) {
+      console.log('⏳ Upload already in progress, waiting...');
+      return;
+    }
 
-    // Minimum size check - for 2.5 seconds of WebM audio, expect at least 5KB
-    const MIN_CHUNK_SIZE = 5000; // 5KB minimum for meaningful audio
+    // Minimum size check - for 6 seconds of WebM audio, expect at least 10KB
+    const MIN_CHUNK_SIZE = 10000; // 10KB minimum for meaningful audio
     if (audioBlob.size < MIN_CHUNK_SIZE) {
       console.log(`⚠️ Audio chunk too small to send: ${audioBlob.size} bytes`);
       return;
     }
 
     const processAudio = async () => {
-      // Create a hash to detect if audio has changed
-      const hash = `${audioBlob.size}`;
-      
-      // Only upload if audio has changed (size increased)
-      if (hash === lastSentHash) {
-        return; // Same chunk, skip
+      // Check if this is the same blob object as last time (prevent duplicate sends)
+      if (audioBlob === lastSentBlobRef.current) {
+        console.log('⚠️ Same blob reference, skipping duplicate send');
+        return; // Same blob, skip
       }
       
-      setLastSentHash(hash);
+      // Mark this blob as being processed
+      lastSentBlobRef.current = audioBlob;
+      console.log(`🚀 Processing new audio chunk: ${audioBlob.size} bytes (${(audioBlob.size / 1024).toFixed(2)} KB)`);
       
       const audioSizeMB = audioBlob.size / (1024 * 1024);
       setStatusMessage(`🔄 Sending ${audioBlob.size.toLocaleString()} bytes (${audioSizeMB.toFixed(2)} MB) to backend...`);
@@ -84,11 +91,11 @@ export function AudioRecorder({ callId, onTranscription, onRecordingChange }) {
     };
 
     processAudio();
-  }, [audioBlob, isRecording, callId, utteranceIndex, lastSentHash, uploadAudio, onTranscription, uploading]);
+  }, [audioBlob, isRecording, callId, utteranceIndex, uploadAudio, onTranscription, uploading]);
 
   const handleStart = () => {
     setUtteranceIndex(0);
-    setLastSentHash(null);
+    lastSentBlobRef.current = null;
     setStatusMessage('');
     startRecording();
   };
@@ -128,7 +135,7 @@ export function AudioRecorder({ callId, onTranscription, onRecordingChange }) {
       {isRecording && (
         <>
           <p className="text-sm text-gray-600">
-            🎤 Recording... Speak clearly. Audio chunks are automatically sent every 3 seconds.
+            🎤 Recording... Speak clearly. Audio chunks are automatically sent every 6 seconds.
           </p>
           
           {audioBlob && (
