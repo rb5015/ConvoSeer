@@ -104,17 +104,25 @@ def _parse_sentiment_response(response_text: str, original_text: str = "") -> tu
             # Clamp score to [-1, 1]
             score = max(-1.0, min(1.0, score))
             
-            # CRITICAL: If keyword analysis contradicts model output, trust keywords
+            # CRITICAL: If label contradicts score, trust the score and infer label
+            # This handles cases where model returns correct score but wrong label
+            if score < -0.3 and label in ["POS", "NEU"]:
+                label = "NEG"
+            elif score > 0.3 and label in ["NEG", "NEU"]:
+                label = "POS"
+            elif abs(score) <= 0.3:
+                label = "NEU"
+            
+            # If keyword analysis contradicts model output, trust keywords for score adjustment
             # This handles cases where the model clearly misclassifies
             if keyword_score is not None and keyword_label is not None:
-                # If keywords strongly suggest one sentiment but model says opposite, override
-                # Check for contradiction: positive keywords but negative score/label
-                if keyword_label == "POS" and (label == "NEG" or score < -0.1):
+                # Check for contradiction: positive keywords but negative score
+                if keyword_label == "POS" and score < -0.1:
                     # Keywords say positive but model says negative - trust keywords
                     score = keyword_score
                     label = keyword_label
-                # Check for contradiction: negative keywords but positive score/label
-                elif keyword_label == "NEG" and (label == "POS" or score > 0.1):
+                # Check for contradiction: negative keywords but positive score
+                elif keyword_label == "NEG" and score > 0.1:
                     # Keywords say negative but model says positive - trust keywords
                     score = keyword_score
                     label = keyword_label
@@ -125,16 +133,6 @@ def _parse_sentiment_response(response_text: str, original_text: str = "") -> tu
                 elif keyword_label == "NEG" and abs(score) < 0.4:
                     score = keyword_score
                     label = keyword_label
-            
-            # Only apply score-based label inference if keyword correction didn't run
-            if keyword_score is None or keyword_label is None:
-                # Fallback: If label contradicts score, trust the score and infer label
-                if score < -0.3 and label in ["POS", "NEU"]:
-                    label = "NEG"
-                elif score > 0.3 and label in ["NEG", "NEU"]:
-                    label = "POS"
-                elif abs(score) <= 0.3:
-                    label = "NEU"
             
             return score, label
         except (json.JSONDecodeError, ValueError, KeyError):

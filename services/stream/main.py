@@ -5,7 +5,7 @@ Streaming API Service - Exposes sentiment and RAG updates via SSE.
 import os
 import json
 import asyncio
-from typing import AsyncGenerator, Dict, Any
+from typing import AsyncGenerator, Dict, Any, List
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,6 +35,10 @@ RAW_TOPIC = os.getenv("KAFKA_TOPIC_RAW", "calls.raw")
 sentiment_queues: Dict[str, queue.Queue] = {}
 rag_queues: Dict[str, queue.Queue] = {}
 transcription_queues: Dict[str, queue.Queue] = {}
+
+# Cache recent messages (last 50 per call_id)
+recent_rag_messages: Dict[str, List[Dict[str, Any]]] = {}
+recent_sentiment_messages: Dict[str, List[Dict[str, Any]]] = {}
 
 
 def sentiment_consumer_thread():
@@ -67,6 +71,12 @@ def sentiment_consumer_thread():
                 # Log received message for debugging
                 print(f"📥 Received sentiment message for call_id: {call_id}")
                 
+                # Cache recent messages
+                if call_id not in recent_sentiment_messages:
+                    recent_sentiment_messages[call_id] = []
+                recent_sentiment_messages[call_id].append(data)
+                recent_sentiment_messages[call_id] = recent_sentiment_messages[call_id][-50:]  # Keep last 50
+                
                 # Broadcast to all queues for this call_id
                 if call_id in sentiment_queues:
                     try:
@@ -97,7 +107,10 @@ def rag_consumer_thread():
                 value_deserializer=lambda m: json.loads(m.decode("utf-8")),
                 key_deserializer=lambda m: m.decode("utf-8") if m else None,
                 group_id="stream-api-rag",
-                consumer_timeout_ms=5000
+                consumer_timeout_ms=30000,  # Increased timeout to prevent frequent reconnects
+                session_timeout_ms=30000,
+                heartbeat_interval_ms=10000,
+                max_poll_records=10  # Process multiple messages at once
             )
             print(f"✅ RAG consumer connected to {RAG_TOPIC}")
             
@@ -114,6 +127,12 @@ def rag_consumer_thread():
                 
                 # Log received message for debugging
                 print(f"📥 Received RAG message for call_id: {call_id}")
+                
+                # Cache recent messages
+                if call_id not in recent_rag_messages:
+                    recent_rag_messages[call_id] = []
+                recent_rag_messages[call_id].append(data)
+                recent_rag_messages[call_id] = recent_rag_messages[call_id][-50:]  # Keep last 50
                 
                 # Broadcast to all queues for this call_id
                 if call_id in rag_queues:
@@ -194,11 +213,27 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/recent/rag/{call_id}")
+def get_recent_rag(call_id: str):
+    """Get recent RAG messages for a call_id."""
+    messages = recent_rag_messages.get(call_id, [])
+    return {"call_id": call_id, "messages": messages, "count": len(messages)}
+
+
+@app.get("/recent/sentiment/{call_id}")
+def get_recent_sentiment(call_id: str):
+    """Get recent sentiment messages for a call_id."""
+    messages = recent_sentiment_messages.get(call_id, [])
+    return {"call_id": call_id, "messages": messages, "count": len(messages)}
+
+
 async def sentiment_event_generator(call_id: str) -> AsyncGenerator[str, None]:
     """Generate SSE events for sentiment updates."""
     # Create queue for this client
     q = queue.Queue(maxsize=100)
     sentiment_queues[call_id] = q
+    print(f"🔌 SSE Sentiment connection opened for call_id: {call_id}")
+    print(f"📋 Active Sentiment queues: {list(sentiment_queues.keys())}")
     
     try:
         while True:
@@ -208,6 +243,7 @@ async def sentiment_event_generator(call_id: str) -> AsyncGenerator[str, None]:
                 
                 # Format as SSE
                 event_data = json.dumps(data)
+                print(f"📤 Sending Sentiment SSE event to call_id: {call_id}")
                 yield f"event: sentiment\ndata: {event_data}\n\n"
                 
             except queue.Empty:
@@ -227,8 +263,19 @@ async def rag_event_generator(call_id: str) -> AsyncGenerator[str, None]:
     # Create queue for this client
     q = queue.Queue(maxsize=100)
     rag_queues[call_id] = q
+    print(f"🔌 SSE RAG connection opened for call_id: {call_id}")
+    print(f"📋 Active RAG queues: {list(rag_queues.keys())}")
     
     try:
+        # Send cached messages first (last 10)
+        cached_messages = recent_rag_messages.get(call_id, [])
+        if cached_messages:
+            print(f"📤 Sending {len(cached_messages)} cached RAG messages to call_id: {call_id}")
+            for data in cached_messages[-10:]:  # Send last 10 cached messages
+                event_data = json.dumps(data)
+                yield f"event: rag\ndata: {event_data}\n\n"
+                await asyncio.sleep(0.05)  # Small delay between cached messages
+        
         while True:
             try:
                 # Wait for new data with timeout
@@ -236,6 +283,7 @@ async def rag_event_generator(call_id: str) -> AsyncGenerator[str, None]:
                 
                 # Format as SSE
                 event_data = json.dumps(data)
+                print(f"📤 Sending RAG SSE event to call_id: {call_id}")
                 yield f"event: rag\ndata: {event_data}\n\n"
                 
             except queue.Empty:
@@ -287,8 +335,28 @@ async def combined_event_generator(call_id: str) -> AsyncGenerator[str, None]:
     sentiment_queues[call_id] = sentiment_q
     rag_queues[call_id] = rag_q
     transcription_queues[call_id] = transcription_q
+    print(f"🔌 SSE Combined connection opened for call_id: {call_id}")
+    print(f"📋 Active queues - Sentiment: {list(sentiment_queues.keys())}, RAG: {list(rag_queues.keys())}")
     
     try:
+        # Send cached RAG messages first (last 10)
+        cached_rag = recent_rag_messages.get(call_id, [])
+        if cached_rag:
+            print(f"📤 Sending {len(cached_rag)} cached RAG messages to call_id: {call_id}")
+            for data in cached_rag[-10:]:  # Send last 10 cached messages
+                event_data = json.dumps(data)
+                yield f"event: rag\ndata: {event_data}\n\n"
+                await asyncio.sleep(0.05)  # Small delay between cached messages
+        
+        # Send cached sentiment messages (last 10)
+        cached_sentiment = recent_sentiment_messages.get(call_id, [])
+        if cached_sentiment:
+            print(f"📤 Sending {len(cached_sentiment)} cached sentiment messages to call_id: {call_id}")
+            for data in cached_sentiment[-10:]:
+                event_data = json.dumps(data)
+                yield f"event: sentiment\ndata: {event_data}\n\n"
+                await asyncio.sleep(0.05)
+        
         while True:
             has_data = False
             
@@ -296,6 +364,7 @@ async def combined_event_generator(call_id: str) -> AsyncGenerator[str, None]:
             try:
                 data = transcription_q.get_nowait()
                 event_data = json.dumps(data)
+                print(f"📤 Sending Transcription SSE event to call_id: {call_id}")
                 yield f"event: transcription\ndata: {event_data}\n\n"
                 has_data = True
             except queue.Empty:
@@ -305,6 +374,7 @@ async def combined_event_generator(call_id: str) -> AsyncGenerator[str, None]:
             try:
                 data = sentiment_q.get_nowait()
                 event_data = json.dumps(data)
+                print(f"📤 Sending Sentiment SSE event to call_id: {call_id}")
                 yield f"event: sentiment\ndata: {event_data}\n\n"
                 has_data = True
             except queue.Empty:
@@ -314,6 +384,7 @@ async def combined_event_generator(call_id: str) -> AsyncGenerator[str, None]:
             try:
                 data = rag_q.get_nowait()
                 event_data = json.dumps(data)
+                print(f"📤 Sending RAG SSE event to call_id: {call_id}")
                 yield f"event: rag\ndata: {event_data}\n\n"
                 has_data = True
             except queue.Empty:
