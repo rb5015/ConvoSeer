@@ -39,81 +39,139 @@ transcription_queues: Dict[str, queue.Queue] = {}
 
 def sentiment_consumer_thread():
     """Background thread to consume sentiment updates."""
-    consumer = KafkaConsumer(
-        SENTIMENT_TOPIC,
-        bootstrap_servers=KAFKA_BROKERS,
-        auto_offset_reset="latest",
-        enable_auto_commit=True,
-        value_deserializer=lambda m: json.loads(m.decode("utf-8")),
-        key_deserializer=lambda m: m.decode("utf-8") if m else None,
-        group_id="stream-api-sentiment"
-    )
-    
-    for message in consumer:
-        call_id = message.key
-        data = message.value
-        
-        # Broadcast to all queues for this call_id
-        if call_id in sentiment_queues:
-            try:
-                sentiment_queues[call_id].put_nowait(data)
-            except queue.Full:
-                pass  # Drop if queue is full
+    while True:
+        try:
+            consumer = KafkaConsumer(
+                SENTIMENT_TOPIC,
+                bootstrap_servers=KAFKA_BROKERS,
+                auto_offset_reset="latest",
+                enable_auto_commit=True,
+                value_deserializer=lambda m: json.loads(m.decode("utf-8")),
+                key_deserializer=lambda m: m.decode("utf-8") if m else None,
+                group_id="stream-api-sentiment",
+                consumer_timeout_ms=5000
+            )
+            print(f"✅ Sentiment consumer connected to {SENTIMENT_TOPIC}")
+            
+            for message in consumer:
+                call_id = message.key
+                data = message.value
+                
+                # Ensure call_id is a string
+                if call_id:
+                    call_id = call_id.decode("utf-8") if isinstance(call_id, bytes) else str(call_id)
+                else:
+                    # Fallback to call_id from message value
+                    call_id = data.get("call_id", "unknown") if isinstance(data, dict) else "unknown"
+                
+                # Log received message for debugging
+                print(f"📥 Received sentiment message for call_id: {call_id}")
+                
+                # Broadcast to all queues for this call_id
+                if call_id in sentiment_queues:
+                    try:
+                        sentiment_queues[call_id].put_nowait(data)
+                        print(f"✅ Queued sentiment data for call_id: {call_id}")
+                    except queue.Full:
+                        print(f"⚠️ Queue full for call_id: {call_id}")
+                        pass  # Drop if queue is full
+                else:
+                    print(f"⚠️ No active SSE connection for call_id: {call_id} (active: {list(sentiment_queues.keys())})")
+        except Exception as e:
+            print(f"❌ Error in sentiment consumer: {e}")
+            import traceback
+            traceback.print_exc()
+            import time
+            time.sleep(5)  # Wait before retrying
 
 
 def rag_consumer_thread():
     """Background thread to consume RAG updates."""
-    consumer = KafkaConsumer(
-        RAG_TOPIC,
-        bootstrap_servers=KAFKA_BROKERS,
-        auto_offset_reset="latest",
-        enable_auto_commit=True,
-        value_deserializer=lambda m: json.loads(m.decode("utf-8")),
-        key_deserializer=lambda m: m.decode("utf-8") if m else None,
-        group_id="stream-api-rag"
-    )
-    
-    for message in consumer:
-        call_id = message.key
-        data = message.value
-        
-        # Broadcast to all queues for this call_id
-        if call_id in rag_queues:
-            try:
-                rag_queues[call_id].put_nowait(data)
-            except queue.Full:
-                pass  # Drop if queue is full
+    while True:
+        try:
+            consumer = KafkaConsumer(
+                RAG_TOPIC,
+                bootstrap_servers=KAFKA_BROKERS,
+                auto_offset_reset="latest",
+                enable_auto_commit=True,
+                value_deserializer=lambda m: json.loads(m.decode("utf-8")),
+                key_deserializer=lambda m: m.decode("utf-8") if m else None,
+                group_id="stream-api-rag",
+                consumer_timeout_ms=5000
+            )
+            print(f"✅ RAG consumer connected to {RAG_TOPIC}")
+            
+            for message in consumer:
+                call_id = message.key
+                data = message.value
+                
+                # Ensure call_id is a string
+                if call_id:
+                    call_id = call_id.decode("utf-8") if isinstance(call_id, bytes) else str(call_id)
+                else:
+                    # Fallback to call_id from message value
+                    call_id = data.get("call_id", "unknown") if isinstance(data, dict) else "unknown"
+                
+                # Log received message for debugging
+                print(f"📥 Received RAG message for call_id: {call_id}")
+                
+                # Broadcast to all queues for this call_id
+                if call_id in rag_queues:
+                    try:
+                        rag_queues[call_id].put_nowait(data)
+                        print(f"✅ Queued RAG data for call_id: {call_id}")
+                    except queue.Full:
+                        print(f"⚠️ Queue full for call_id: {call_id}")
+                        pass  # Drop if queue is full
+                else:
+                    print(f"⚠️ No active SSE connection for call_id: {call_id} (active: {list(rag_queues.keys())})")
+        except Exception as e:
+            print(f"❌ Error in RAG consumer: {e}")
+            import traceback
+            traceback.print_exc()
+            import time
+            time.sleep(5)  # Wait before retrying
 
 
 def transcription_consumer_thread():
     """Background thread to consume transcription updates from raw and enriched topics."""
-    # Try enriched topic first, fall back to raw topic
-    try:
-        consumer = KafkaConsumer(
-            ENRICHED_TOPIC,
-            RAW_TOPIC,  # Also consume from raw topic for immediate transcriptions
-            bootstrap_servers=KAFKA_BROKERS,
-            auto_offset_reset="latest",
-            enable_auto_commit=True,
-            value_deserializer=lambda m: json.loads(m.decode("utf-8")),
-            key_deserializer=lambda m: m.decode("utf-8") if m else None,
-            group_id="stream-api-transcription"
-        )
-        
-        print(f"✅ Transcription consumer connected to topics: {ENRICHED_TOPIC}, {RAW_TOPIC}")
-        
-        for message in consumer:
-            call_id = message.key
-            data = message.value
+    while True:
+        try:
+            # Try to consume from both topics, but handle missing topics gracefully
+            topics = []
+            if RAW_TOPIC:
+                topics.append(RAW_TOPIC)
+            # Only add enriched topic if it exists (will be created when streaming worker starts)
             
-            # Broadcast to all queues for this call_id
-            if call_id in transcription_queues:
-                try:
-                    transcription_queues[call_id].put_nowait(data)
-                except queue.Full:
-                    pass  # Drop if queue is full
-    except Exception as e:
-        print(f"❌ Error in transcription consumer: {e}")
+            consumer = KafkaConsumer(
+                *topics,
+                bootstrap_servers=KAFKA_BROKERS,
+                auto_offset_reset="latest",
+                enable_auto_commit=True,
+                value_deserializer=lambda m: json.loads(m.decode("utf-8")),
+                key_deserializer=lambda m: m.decode("utf-8") if m else None,
+                group_id="stream-api-transcription",
+                consumer_timeout_ms=5000
+            )
+            
+            print(f"✅ Transcription consumer connected to topics: {', '.join(topics)}")
+            
+            for message in consumer:
+                call_id = message.key or message.value.get("call_id", "unknown")
+                data = message.value
+                
+                # Broadcast to all queues for this call_id
+                if call_id in transcription_queues:
+                    try:
+                        transcription_queues[call_id].put_nowait(data)
+                    except queue.Full:
+                        pass  # Drop if queue is full
+        except Exception as e:
+            print(f"❌ Error in transcription consumer: {e}")
+            import traceback
+            traceback.print_exc()
+            import time
+            time.sleep(5)  # Wait before retrying
 
 
 @app.on_event("startup")

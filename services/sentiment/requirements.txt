@@ -1,14 +1,10 @@
 fastapi==0.115.0
-uvicorn[standard]>=0.30.0
+uvicorn[standard]==0.30.6
 pydantic==2.8.2
 orjson==3.10.7
 tenacity==8.5.0
-kafka-python==2.0.2
-pymongo==4.8.0
-cachetools==5.5.0
-requests==2.32.3
 torch>=2.0.0
 transformers>=4.51.0
 sentencepiece>=0.1.99
-
+cachetools==5.5.0
 

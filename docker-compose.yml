@@ -26,9 +26,9 @@ services:
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
 
   spark-master:
-    image: apache/spark-py:v3.5.0
+    image: apache/spark:3.5.0
     container_name: spark-master
-    command: bin/spark-class org.apache.spark.deploy.master.Master
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
     environment:
       - SPARK_MASTER_HOST=spark-master
       - SPARK_MASTER_PORT=7077
@@ -38,11 +38,13 @@ services:
       - "8080:8080"
     volumes:
       - ./streaming:/opt/spark/work-dir
+    networks:
+      - default
 
   spark-worker:
-    image: apache/spark-py:v3.5.0
+    image: apache/spark:3.5.0
     container_name: spark-worker
-    command: bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
     environment:
       - SPARK_WORKER_MEMORY=2g
       - SPARK_WORKER_CORES=2
@@ -51,8 +53,11 @@ services:
       - "8081:8081"
     depends_on:
       - spark-master
+      - sentiment
     volumes:
       - ./streaming:/opt/spark/work-dir
+    networks:
+      - default
 
   embedder:
     build: ./services/embedder
@@ -63,6 +68,22 @@ services:
       - "8001:8000"
     depends_on:
       - kafka
+  sentiment:
+    build: ./services/sentiment
+    container_name: sentiment-service
+    env_file:
+      - .env
+    ports:
+      - "8005:8000"
+    depends_on:
+      - kafka
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+        reservations:
+          memory: 4G
+    restart: unless-stopped
   embedder-worker:
     build: ./services/embedder
     container_name: embedder-worker
@@ -93,6 +114,7 @@ services:
       - "8002:8000"
     depends_on:
       - kafka
+      - sentiment
 
   rag-stream-worker:
     build: ./services/rag
@@ -113,6 +135,16 @@ services:
       - "8003:8003"
     depends_on:
       - kafka
+
+  streaming-worker:
+    build: ./services/streaming_worker
+    container_name: streaming-worker
+    env_file:
+      - .env
+    depends_on:
+      - kafka
+      - sentiment
+    restart: unless-stopped
 
   audio-service:
     build: ./services/audio

@@ -8,7 +8,7 @@ from google import genai
 from google.genai import types
 from pymongo import MongoClient
 from pymongo.collection import Collection
-from .prompts import ASSIST_SYSTEM_PROMPT, build_user_prompt
+from prompts import ASSIST_SYSTEM_PROMPT, build_user_prompt
 
 
 class AssistRequest(BaseModel):
@@ -48,7 +48,7 @@ def health() -> Dict[str, str]:
 def _embed_text(text: str) -> List[float]:
     if text in _embed_cache:
         return _embed_cache[text]
-    # Use embedder service (which now uses Gemini embeddings)
+    # Use embedder service (which uses Qwen3-Embedding-0.6B)
     normalized_text = text.strip().replace("\n", " ")
     try:
         resp = requests.post(
@@ -66,7 +66,7 @@ def _embed_text(text: str) -> List[float]:
 
 
 def _vector_search(query_vec: List[float], k: int, filters: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    if not _col:
+    if _col is None:
         return []
     vector_stage: Dict[str, Any] = {
         "$vectorSearch": {

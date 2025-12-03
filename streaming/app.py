@@ -1,8 +1,9 @@
 import os
+import requests
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import (
     col, from_json, to_json, struct, udf, lit, window, 
-    avg, count, collect_list, max as spark_max, min as spark_min
+    avg, count, collect_list, max as spark_max, min as spark_min, concat_ws
 )
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType, MapType, TimestampType
 
@@ -12,6 +13,7 @@ ENRICHED_TOPIC = os.getenv("KAFKA_TOPIC_ENRICHED", "calls.enriched")
 SENTIMENT_TOPIC = os.getenv("KAFKA_TOPIC_SENTIMENT", "calls.sentiment")
 BROKERS = os.getenv("KAFKA_BROKERS", "kafka:29092")
 WINDOW_SECONDS = int(os.getenv("STREAM_WINDOW_SECONDS", "10"))
+SENTIMENT_URL = os.getenv("SENTIMENT_URL", "http://sentiment-service:8000")
 
 raw_schema = StructType([
     StructField("call_id", StringType(), True),
@@ -31,27 +33,6 @@ def clean_text(txt: str) -> str:
     t = txt.strip().replace("\n", " ")
     return " ".join(t.split())
 
-def infer_role(txt: str, role: str | None) -> str:
-    if role:
-        return role
-    t = (txt or "").lower()
-    if t.startswith("agent:"):
-        return "agent"
-    if t.startswith("customer:"):
-        return "customer"
-    return "unknown"
-
-def simple_sentiment(txt: str) -> tuple[float, str]:
-    # Placeholder lightweight heuristic; replace with HF pipeline in production
-    t = (txt or "").lower()
-    score = 0.0
-    if any(w in t for w in ["great", "thanks", "appreciate", "good", "awesome", "perfect"]):
-        score = 0.7
-    elif any(w in t for w in ["angry", "upset", "terrible", "bad", "cancel", "complaint"]):
-        score = -0.7
-    label = "POS" if score > 0.2 else ("NEG" if score < -0.2 else "NEU")
-    return float(score), label
-
 from pyspark.sql.types import StructType as S, StructField as F, DoubleType
 sentiment_schema = S([F("score", DoubleType(), False), F("label", StringType(), False)])
 
@@ -59,17 +40,54 @@ from pyspark.sql.functions import pandas_udf, PandasUDFType
 import pandas as pd
 
 @pandas_udf(sentiment_schema, PandasUDFType.SCALAR)
-def sentiment_udf(texts: pd.Series) -> pd.DataFrame:
+def qwen_sentiment_udf(texts: pd.Series) -> pd.DataFrame:
+    """Call sentiment service to analyze sentiment for batch of texts."""
     scores = []
     labels = []
-    for t in texts:
-        sc, lb = simple_sentiment(t)
-        scores.append(sc)
-        labels.append(lb)
+    
+    # Convert to list and filter empty texts
+    text_list = texts.tolist()
+    non_empty_texts = [t for t in text_list if t and t.strip()]
+    
+    if not non_empty_texts:
+        # Return neutral for all empty texts
+        return pd.DataFrame({"score": [0.0] * len(text_list), "label": ["NEU"] * len(text_list)})
+    
+    try:
+        # Call sentiment service
+        response = requests.post(
+            f"{SENTIMENT_URL}/analyze",
+            json={"texts": non_empty_texts},
+            timeout=30
+        )
+        response.raise_for_status()
+        data = response.json()
+        
+        # Map results back to original list (handling empty texts)
+        result_map = {}
+        for i, result in enumerate(data.get("results", [])):
+            if i < len(non_empty_texts):
+                result_map[non_empty_texts[i]] = (result.get("score", 0.0), result.get("label", "NEU"))
+        
+        # Build results matching original order
+        for t in text_list:
+            if t and t.strip() and t in result_map:
+                score, label = result_map[t]
+                scores.append(float(score))
+                labels.append(str(label).upper())
+            else:
+                scores.append(0.0)
+                labels.append("NEU")
+    
+    except Exception as e:
+        # On error, return neutral sentiment for all
+        print(f"Error calling sentiment service: {e}")
+        scores = [0.0] * len(text_list)
+        labels = ["NEU"] * len(text_list)
+    
     return pd.DataFrame({"score": scores, "label": labels})
 
 clean_udf = udf(clean_text, StringType())
-role_udf = udf(infer_role, StringType())
 
 
 def main() -> None:
@@ -102,8 +120,7 @@ def main() -> None:
     enriched = (
         parsed_with_ts
         .withColumn("clean_text", clean_udf(col("text")))
-        .withColumn("speaker_role", role_udf(col("text"), col("speaker_role")))
-        .withColumn("sentiment", sentiment_udf(col("clean_text")))
+        .withColumn("sentiment", qwen_sentiment_udf(col("clean_text")))
         .select(
             col("call_id"),
             col("utterance_id"),
@@ -112,7 +129,6 @@ def main() -> None:
             col("event_time"),
             col("event_timestamp"),
             col("chunk_id"),
-            col("speaker_role"),
             col("clean_text").alias("text"),
             col("metadata"),
             col("sentiment"),
@@ -132,6 +148,7 @@ def main() -> None:
     )
 
     # Window aggregation for sentiment analysis
+    # Combine all texts in window for RAG querying
     windowed = (
         enriched
         .withWatermark("event_timestamp", f"{WINDOW_SECONDS * 2} seconds")
@@ -142,10 +159,11 @@ def main() -> None:
         .agg(
             avg(col("sentiment.score")).alias("avg_sentiment_score"),
             count("*").alias("utterance_count"),
+            # Combine all texts with separator for RAG querying
+            concat_ws(" | ", collect_list(col("text"))).alias("combined_text"),
             collect_list(struct(
                 col("utterance_id"),
                 col("text"),
-                col("speaker_role"),
                 col("sentiment")
             )).alias("utterances"),
             spark_max(col("event_time")).alias("window_end_time"),
@@ -159,6 +177,7 @@ def main() -> None:
             col("window_end_time"),
             col("avg_sentiment_score"),
             col("utterance_count"),
+            col("combined_text"),
             col("utterances")
         )
     )

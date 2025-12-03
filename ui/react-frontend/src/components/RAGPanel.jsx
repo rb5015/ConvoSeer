@@ -27,12 +27,12 @@ export function RAGPanel({ ragSuggestions }) {
               🔍 Context
             </summary>
             <div className="mt-3 space-y-2 text-sm text-gray-600">
-              {latestRAG.latest_utterance && (
+              {(latestRAG.query_text || latestRAG.latest_utterance) && (
                 <p>
-                  <strong>Latest:</strong>{' '}
-                  {latestRAG.latest_utterance.length > 80
-                    ? `${latestRAG.latest_utterance.substring(0, 80)}...`
-                    : latestRAG.latest_utterance}
+                  <strong>Query:</strong>{' '}
+                  {(latestRAG.query_text || latestRAG.latest_utterance).length > 80
+                    ? `${(latestRAG.query_text || latestRAG.latest_utterance).substring(0, 80)}...`
+                    : (latestRAG.query_text || latestRAG.latest_utterance)}
                 </p>
               )}
               <p>
@@ -41,6 +41,11 @@ export function RAGPanel({ ragSuggestions }) {
               {latestRAG.sentiment && (
                 <p>
                   <strong>Sentiment:</strong> {latestRAG.sentiment.avg_score?.toFixed(2) || '0.00'}
+                </p>
+              )}
+              {latestRAG.window_start && latestRAG.window_end && (
+                <p className="text-xs text-gray-500">
+                  <strong>Window:</strong> {new Date(latestRAG.window_start).toLocaleTimeString()} - {new Date(latestRAG.window_end).toLocaleTimeString()}
                 </p>
               )}
             </div>

@@ -5,9 +5,9 @@ from pymongo import MongoClient
 
 def main() -> int:
     uri = os.getenv("MONGODB_URI")
-    db_name = os.getenv("MONGODB_DB", "agent_assist")
-    coll_name = os.getenv("MONGODB_COLLECTION", "utterances")
-    dims = int(os.getenv("EMBEDDING_DIMS", "1536"))
+    db_name = os.getenv("MONGODB_DB", "my_database")
+    coll_name = os.getenv("MONGODB_COLLECTION", "call_chunks")
+    dims = int(os.getenv("EMBEDDING_DIMS", "1024"))
     if not uri:
         print("MONGODB_URI is required in environment")
         return 1
@@ -18,7 +18,7 @@ def main() -> int:
         "createSearchIndexes": coll_name,
         "indexes": [
             {
-                "name": "vector_index",
+                "name": "embedding_index",
                 "definition": {
                     "fields": [
                         {

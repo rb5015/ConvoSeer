@@ -17,7 +17,7 @@ load_dotenv()
 KAFKA_BROKERS = os.getenv("KAFKA_BROKERS", "localhost:9092")
 SENTIMENT_TOPIC = os.getenv("KAFKA_TOPIC_SENTIMENT", "calls.sentiment")
 RAG_TOPIC = os.getenv("KAFKA_TOPIC_RAG", "calls.rag")
-RAG_URL = os.getenv("RAG_URL", "http://localhost:8002")
+RAG_URL = os.getenv("RAG_URL", "http://rag:8000")
 
 
 def json_dumps(data: Dict[str, Any]) -> bytes:
@@ -52,33 +52,35 @@ def process_sentiment_window(window_data: Dict[str, Any], producer: KafkaProduce
     """Process a sentiment window and generate RAG response."""
     call_id = window_data.get("call_id")
     utterances = window_data.get("utterances", [])
+    combined_text = window_data.get("combined_text", "")
     avg_sentiment = window_data.get("avg_sentiment_score", 0.0)
     utterance_count = window_data.get("utterance_count", 0)
     
-    if not utterances:
-        print(f"⚠️  No utterances in window for call {call_id}")
-        return
+    # Use combined_text if available, otherwise fall back to latest utterance
+    query_text = combined_text.strip() if combined_text else ""
     
-    # Get the most recent customer utterance
-    customer_utterances = [u for u in utterances if u.get("speaker_role") == "customer"]
-    if not customer_utterances:
-        print(f"⚠️  No customer utterances in window for call {call_id}")
-        return
+    if not query_text and utterances:
+        # Fallback: use the last utterance's text
+        latest_utterance = utterances[-1] if utterances else {}
+        query_text = latest_utterance.get("text", "").strip()
     
-    latest_utterance = customer_utterances[-1]
-    latest_text = latest_utterance.get("text", "")
-    
-    if not latest_text:
-        print(f"⚠️  Empty text in latest utterance for call {call_id}")
+    if not query_text:
+        print(f"⚠️  No text available for RAG query in window for call {call_id}")
         return
     
     print(f"\n📊 Processing window for call {call_id}")
     print(f"   Utterances: {utterance_count}, Avg sentiment: {avg_sentiment:.2f}")
-    print(f"   Latest customer: \"{latest_text[:50]}...\"")
+    print(f"   Query text: \"{query_text[:100]}...\"")
     
-    # Call RAG service
+    # Call RAG service with combined text
     print(f"🤖 Calling RAG service...")
-    rag_response = call_rag_service(latest_text, call_id)
+    rag_response = call_rag_service(query_text, call_id)
+    
+    # Get latest utterance_id for reference (if available)
+    latest_utterance_id = None
+    if utterances:
+        latest_utterance = utterances[-1]
+        latest_utterance_id = latest_utterance.get("utterance_id")
     
     # Create response message
     response_msg = {
@@ -86,8 +88,8 @@ def process_sentiment_window(window_data: Dict[str, Any], producer: KafkaProduce
         "window_start": window_data.get("window_start"),
         "window_end": window_data.get("window_end"),
         "timestamp": int(time.time() * 1000),
-        "latest_utterance": latest_text,
-        "utterance_id": latest_utterance.get("utterance_id"),
+        "query_text": query_text,
+        "utterance_id": latest_utterance_id,
         "sentiment": {
             "avg_score": avg_sentiment,
             "utterance_count": utterance_count
@@ -141,6 +143,15 @@ def main() -> None:
         for message in consumer:
             try:
                 window_data = message.value
+                # Extract call_id from message key as fallback
+                call_id_from_key = message.key
+                if call_id_from_key:
+                    call_id_from_key = call_id_from_key.decode("utf-8") if isinstance(call_id_from_key, bytes) else str(call_id_from_key)
+                    # Use call_id from key if not in window_data
+                    if not window_data.get("call_id") and call_id_from_key:
+                        window_data["call_id"] = call_id_from_key
+                
+                print(f"📥 Received sentiment window - call_id: {window_data.get('call_id', 'unknown')}")
                 process_sentiment_window(window_data, producer)
             except Exception as e:
                 print(f"❌ Error processing message: {e}")
