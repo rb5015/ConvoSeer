@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-KAFKA_BROKERS = os.getenv("KAFKA_BROKERS", "localhost:9092")
+KAFKA_BROKERS = os.getenv("KAFKA_BROKERS", "kafka:29092")
 SENTIMENT_TOPIC = os.getenv("KAFKA_TOPIC_SENTIMENT", "calls.sentiment")
 RAG_TOPIC = os.getenv("KAFKA_TOPIC_RAG", "calls.rag")
 RAG_URL = os.getenv("RAG_URL", "http://rag:8000")
@@ -35,7 +35,7 @@ def call_rag_service(latest_utterance: str, call_id: str, k: int = 5) -> Dict[st
                 "k": k,
                 "call_id": call_id
             },
-            timeout=30
+            timeout=60
         )
         response.raise_for_status()
         return response.json()

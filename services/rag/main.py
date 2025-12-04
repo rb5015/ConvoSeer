@@ -54,7 +54,7 @@ def _embed_text(text: str) -> List[float]:
         resp = requests.post(
             f"{EMBEDDER_URL}/embed",
             json={"texts": [normalized_text]},
-            timeout=30
+            timeout=60
         )
         resp.raise_for_status()
         data = resp.json()
