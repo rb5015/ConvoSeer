@@ -11,6 +11,7 @@ import requests
 from typing import Dict, List, Any
 from datetime import datetime, timedelta
 from kafka import KafkaConsumer, KafkaProducer
+from kafka.errors import NoBrokersAvailable
 from collections import defaultdict
 
 # Disable Python output buffering
@@ -149,25 +150,40 @@ def main() -> None:
     print(f"   Sentiment URL: {SENTIMENT_URL}")
     print(f"   Window size: {WINDOW_SECONDS} seconds\n")
     
-    # Initialize Kafka consumer and producer
-    consumer = KafkaConsumer(
-        RAW_TOPIC,
-        bootstrap_servers=KAFKA_BROKERS,
-        auto_offset_reset="latest",
-        enable_auto_commit=True,
-        value_deserializer=lambda m: json.loads(m.decode("utf-8")),
-        key_deserializer=lambda m: m.decode("utf-8") if m else None,
-        group_id="streaming-worker"
-    )
+    # Initialize Kafka consumer and producer with retry logic
+    backoff = 1
+    consumer = None
+    producer = None
     
-    producer = KafkaProducer(
-        bootstrap_servers=KAFKA_BROKERS,
-        value_serializer=lambda v: v if isinstance(v, bytes) else json.dumps(v).encode("utf-8"),
-        key_serializer=lambda k: k.encode("utf-8") if isinstance(k, str) else k
-    )
-    
-    print("✅ Connected to Kafka", flush=True)
-    print("🎧 Listening for messages...\n", flush=True)
+    while consumer is None or producer is None:
+        try:
+            consumer = KafkaConsumer(
+                RAW_TOPIC,
+                bootstrap_servers=KAFKA_BROKERS,
+                auto_offset_reset="latest",
+                enable_auto_commit=True,
+                value_deserializer=lambda m: json.loads(m.decode("utf-8")),
+                key_deserializer=lambda m: m.decode("utf-8") if m else None,
+                group_id="streaming-worker"
+            )
+            
+            producer = KafkaProducer(
+                bootstrap_servers=KAFKA_BROKERS,
+                value_serializer=lambda v: v if isinstance(v, bytes) else json.dumps(v).encode("utf-8"),
+                key_serializer=lambda k: k.encode("utf-8") if isinstance(k, str) else k
+            )
+            
+            print("✅ Connected to Kafka", flush=True)
+            print("🎧 Listening for messages...\n", flush=True)
+            break
+        except NoBrokersAvailable:
+            print(f"⚠️  Kafka brokers not available at '{KAFKA_BROKERS}', retrying in {backoff}s...", flush=True)
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 30)
+        except Exception as e:
+            print(f"⚠️  Error connecting to Kafka: {e}, retrying in {backoff}s...", flush=True)
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 30)
     
     # Window tracking: call_id -> list of messages in current window
     windows: Dict[str, List[Dict[str, Any]]] = defaultdict(list)

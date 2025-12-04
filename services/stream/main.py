@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from kafka import KafkaConsumer
+from kafka.errors import NoBrokersAvailable
 import threading
 import queue
 import time
@@ -48,6 +49,7 @@ recent_sentiment_messages: Dict[str, List[Dict[str, Any]]] = {}
 
 def sentiment_consumer_thread():
     """Background thread to consume sentiment updates."""
+    backoff = 1
     while True:
         consumer = None
         try:
@@ -61,10 +63,8 @@ def sentiment_consumer_thread():
                 group_id="stream-api-sentiment",   # ✅ back to a stable group id
                 # ❌ NO consumer_timeout_ms
             )
-            print(
-                f"✅ Sentiment consumer connected to {SENTIMENT_TOPIC}, "
-                f"group_id={consumer.config.get('group_id')}"
-            )
+            backoff = 1
+            print(f"✅ Sentiment consumer connected to {SENTIMENT_TOPIC}")
 
             for message in consumer:
                 call_id = message.key
@@ -97,6 +97,10 @@ def sentiment_consumer_thread():
                         f"(active: {list(sentiment_queues.keys())})"
                     )
 
+        except NoBrokersAvailable:
+            print(f"⚠️  Kafka brokers not available at '{KAFKA_BROKERS}', retrying in {backoff}s...")
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 30)
         except Exception as e:
             print(f"❌ Error in sentiment consumer: {e}")
             traceback.print_exc()
@@ -111,6 +115,7 @@ def sentiment_consumer_thread():
 
 def rag_consumer_thread():
     """Background thread to consume RAG updates."""
+    backoff = 1
     while True:
         consumer = None
         try:
@@ -123,10 +128,8 @@ def rag_consumer_thread():
                 key_deserializer=lambda m: m.decode("utf-8") if m else None,
                 group_id="stream-api-rag",   # ✅ stable group id again
             )
-            print(
-                f"✅ RAG consumer connected to {RAG_TOPIC}, "
-                f"group_id={consumer.config.get('group_id')}"
-            )
+            backoff = 1
+            print(f"✅ RAG consumer connected to {RAG_TOPIC}")
 
             for message in consumer:
                 call_id = message.key
@@ -158,6 +161,10 @@ def rag_consumer_thread():
                         f"(active: {list(rag_queues.keys())})"
                     )
 
+        except NoBrokersAvailable:
+            print(f"⚠️  Kafka brokers not available at '{KAFKA_BROKERS}', retrying in {backoff}s...")
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 30)
         except Exception as e:
             print(f"❌ Error in RAG consumer: {e}")
             traceback.print_exc()
@@ -172,6 +179,7 @@ def rag_consumer_thread():
 
 def transcription_consumer_thread():
     """Background thread to consume transcription updates (raw and/or enriched)."""
+    backoff = 1
     while True:
         consumer = None
         try:
@@ -195,11 +203,8 @@ def transcription_consumer_thread():
                 key_deserializer=lambda m: m.decode("utf-8") if m else None,
                 group_id="stream-api-transcription",   # ✅ stable group id
             )
-
-            print(
-                f"✅ Transcription consumer connected to topics: {', '.join(topics)}, "
-                f"group_id={consumer.config.get('group_id')}"
-            )
+            backoff = 1
+            print(f"✅ Transcription consumer connected to topics: {', '.join(topics)}")
 
             for message in consumer:
                 call_id = message.key

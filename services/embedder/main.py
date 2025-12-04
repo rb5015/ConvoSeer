@@ -42,15 +42,19 @@ def _normalize_text(text: str) -> str:
 
 
 def _get_model_and_tokenizer(model_name: str):
-    """Lazy load model and tokenizer."""
+    """Lazy load model and tokenizer with memory optimization."""
     global _tokenizer, _model
     if _tokenizer is None or _model is None:
         print(f"Loading embedding model: {model_name} on {DEVICE}")
         _tokenizer = AutoTokenizer.from_pretrained(model_name)
-        _model = AutoModel.from_pretrained(model_name)
+        # Use half precision (float16) to reduce memory on CPU/Apple Silicon
+        _model = AutoModel.from_pretrained(
+            model_name,
+            torch_dtype=torch.float16 if DEVICE == "cpu" else torch.float32
+        )
         _model.to(DEVICE)
         _model.eval()
-        print(f"✅ Model loaded successfully")
+        print(f"✅ Model loaded successfully on {DEVICE} (dtype: float16)" if DEVICE == "cpu" else f"✅ Model loaded successfully on {DEVICE} (dtype: float32)")
     return _tokenizer, _model
 
 
@@ -80,35 +84,17 @@ def _embed_batch(texts: List[str], model_name: str) -> List[List[float]]:
         max_length=MAX_LENGTH,
         return_tensors="pt",
     )
-    batch_dict.to(model.device)
+    # Move all tensors in batch_dict to model device (fix for Apple Silicon meta device issues)
+    batch_dict = {key: val.to(model.device) if hasattr(val, 'to') else val for key, val in batch_dict.items()}
     
     with torch.no_grad():
         outputs = model(**batch_dict)
         
-        # Debug: log available attributes
-        available_attrs = [attr for attr in dir(outputs) if not attr.startswith('_')]
-        print(f"Model output attributes: {available_attrs}")
-        
-        # MXBAI models may return pooler_output or last_hidden_states
-        if hasattr(outputs, 'pooler_output') and outputs.pooler_output is not None:
-            # Use pooler output if available (already pooled)
-            print("Using pooler_output")
-            embeddings = outputs.pooler_output
-        elif hasattr(outputs, 'last_hidden_states') and outputs.last_hidden_states is not None:
-            # Use mean pooling if we have hidden states
-            print("Using last_hidden_states with mean pooling")
-            embeddings = mean_pooling(outputs.last_hidden_states, batch_dict['attention_mask'])
+        # MXBAI models return last_hidden_state
+        if hasattr(outputs, 'last_hidden_state') and outputs.last_hidden_state is not None:
+            embeddings = mean_pooling(outputs.last_hidden_state, batch_dict['attention_mask'])
         else:
-            # Try to find any tensor attribute
-            print(f"Warning: No standard output found. Available attributes: {available_attrs}")
-            # Check for common alternative attribute names
-            if hasattr(outputs, 'embeddings'):
-                embeddings = outputs.embeddings
-            elif hasattr(outputs, 'hidden_states') and outputs.hidden_states:
-                # Use last layer from hidden_states
-                embeddings = mean_pooling(outputs.hidden_states[-1], batch_dict['attention_mask'])
-            else:
-                raise ValueError(f"Model output doesn't have expected attributes. Available: {available_attrs}, Type: {type(outputs)}")
+            raise ValueError(f"Model output doesn't have expected 'last_hidden_state' attribute")
         
         # Normalize embeddings (L2 normalization)
         embeddings = F.normalize(embeddings, p=2, dim=1)
