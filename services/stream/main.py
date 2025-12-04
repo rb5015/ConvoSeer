@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Streaming API Service - Exposes sentiment and RAG updates via SSE.
+Streaming API Service - Exposes transcription, sentiment and RAG updates via SSE.
 """
 import os
 import json
@@ -12,7 +12,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from kafka import KafkaConsumer
 import threading
 import queue
-
+import time
+import traceback
 
 app = FastAPI(title="Streaming API Service", version="0.1.0")
 
@@ -41,9 +42,14 @@ recent_rag_messages: Dict[str, List[Dict[str, Any]]] = {}
 recent_sentiment_messages: Dict[str, List[Dict[str, Any]]] = {}
 
 
+# ---------------------------------------------------------------------------
+# Kafka Consumers
+# ---------------------------------------------------------------------------
+
 def sentiment_consumer_thread():
     """Background thread to consume sentiment updates."""
     while True:
+        consumer = None
         try:
             consumer = KafkaConsumer(
                 SENTIMENT_TOPIC,
@@ -52,31 +58,32 @@ def sentiment_consumer_thread():
                 enable_auto_commit=True,
                 value_deserializer=lambda m: json.loads(m.decode("utf-8")),
                 key_deserializer=lambda m: m.decode("utf-8") if m else None,
-                group_id="stream-api-sentiment",
-                # consumer_timeout_ms=5000
+                group_id="stream-api-sentiment",   # ✅ back to a stable group id
+                # ❌ NO consumer_timeout_ms
             )
-            print(f"✅ Sentiment consumer connected to {SENTIMENT_TOPIC}")
-            
+            print(
+                f"✅ Sentiment consumer connected to {SENTIMENT_TOPIC}, "
+                f"group_id={consumer.config.get('group_id')}"
+            )
+
             for message in consumer:
                 call_id = message.key
                 data = message.value
-                
+
                 # Ensure call_id is a string
                 if call_id:
                     call_id = call_id.decode("utf-8") if isinstance(call_id, bytes) else str(call_id)
                 else:
-                    # Fallback to call_id from message value
                     call_id = data.get("call_id", "unknown") if isinstance(data, dict) else "unknown"
-                
-                # Log received message for debugging
+
                 print(f"📥 Received sentiment message for call_id: {call_id}")
-                
+
                 # Cache recent messages
                 if call_id not in recent_sentiment_messages:
                     recent_sentiment_messages[call_id] = []
                 recent_sentiment_messages[call_id].append(data)
-                recent_sentiment_messages[call_id] = recent_sentiment_messages[call_id][-50:]  # Keep last 50
-                
+                recent_sentiment_messages[call_id] = recent_sentiment_messages[call_id][-50:]
+
                 # Broadcast to all queues for this call_id
                 if call_id in sentiment_queues:
                     try:
@@ -84,20 +91,28 @@ def sentiment_consumer_thread():
                         print(f"✅ Queued sentiment data for call_id: {call_id}")
                     except queue.Full:
                         print(f"⚠️ Queue full for call_id: {call_id}")
-                        pass  # Drop if queue is full
                 else:
-                    print(f"⚠️ No active SSE connection for call_id: {call_id} (active: {list(sentiment_queues.keys())})")
+                    print(
+                        f"⚠️ No active SSE connection for call_id: {call_id} "
+                        f"(active: {list(sentiment_queues.keys())})"
+                    )
+
         except Exception as e:
             print(f"❌ Error in sentiment consumer: {e}")
-            import traceback
             traceback.print_exc()
-            import time
-            time.sleep(5)  # Wait before retrying
+            time.sleep(5)  # Retry after short delay
+        finally:
+            if consumer is not None:
+                try:
+                    consumer.close()
+                except Exception:
+                    pass
 
 
 def rag_consumer_thread():
     """Background thread to consume RAG updates."""
     while True:
+        consumer = None
         try:
             consumer = KafkaConsumer(
                 RAG_TOPIC,
@@ -106,34 +121,30 @@ def rag_consumer_thread():
                 enable_auto_commit=True,
                 value_deserializer=lambda m: json.loads(m.decode("utf-8")),
                 key_deserializer=lambda m: m.decode("utf-8") if m else None,
-                group_id="stream-api-rag",
-                consumer_timeout_ms=30000,  # Increased timeout to prevent frequent reconnects
-                session_timeout_ms=30000,
-                heartbeat_interval_ms=10000,
-                max_poll_records=10  # Process multiple messages at once
+                group_id="stream-api-rag",   # ✅ stable group id again
             )
-            print(f"✅ RAG consumer connected to {RAG_TOPIC}")
-            
+            print(
+                f"✅ RAG consumer connected to {RAG_TOPIC}, "
+                f"group_id={consumer.config.get('group_id')}"
+            )
+
             for message in consumer:
                 call_id = message.key
                 data = message.value
-                
-                # Ensure call_id is a string
+
                 if call_id:
                     call_id = call_id.decode("utf-8") if isinstance(call_id, bytes) else str(call_id)
                 else:
-                    # Fallback to call_id from message value
                     call_id = data.get("call_id", "unknown") if isinstance(data, dict) else "unknown"
-                
-                # Log received message for debugging
+
                 print(f"📥 Received RAG message for call_id: {call_id}")
-                
+
                 # Cache recent messages
                 if call_id not in recent_rag_messages:
                     recent_rag_messages[call_id] = []
                 recent_rag_messages[call_id].append(data)
-                recent_rag_messages[call_id] = recent_rag_messages[call_id][-50:]  # Keep last 50
-                
+                recent_rag_messages[call_id] = recent_rag_messages[call_id][-50:]
+
                 # Broadcast to all queues for this call_id
                 if call_id in rag_queues:
                     try:
@@ -141,27 +152,40 @@ def rag_consumer_thread():
                         print(f"✅ Queued RAG data for call_id: {call_id}")
                     except queue.Full:
                         print(f"⚠️ Queue full for call_id: {call_id}")
-                        pass  # Drop if queue is full
                 else:
-                    print(f"⚠️ No active SSE connection for call_id: {call_id} (active: {list(rag_queues.keys())})")
+                    print(
+                        f"⚠️ No active SSE connection for call_id: {call_id} "
+                        f"(active: {list(rag_queues.keys())})"
+                    )
+
         except Exception as e:
             print(f"❌ Error in RAG consumer: {e}")
-            import traceback
             traceback.print_exc()
-            import time
-            time.sleep(5)  # Wait before retrying
+            time.sleep(5)
+        finally:
+            if consumer is not None:
+                try:
+                    consumer.close()
+                except Exception:
+                    pass
 
 
 def transcription_consumer_thread():
-    """Background thread to consume transcription updates from raw and enriched topics."""
+    """Background thread to consume transcription updates (raw and/or enriched)."""
     while True:
+        consumer = None
         try:
-            # Try to consume from both topics, but handle missing topics gracefully
-            topics = []
+            topics: List[str] = []
             if RAW_TOPIC:
                 topics.append(RAW_TOPIC)
-            # Only add enriched topic if it exists (will be created when streaming worker starts)
-            
+            if ENRICHED_TOPIC:
+                topics.append(ENRICHED_TOPIC)
+
+            if not topics:
+                print("⚠️ No transcription topics configured; sleeping 10s")
+                time.sleep(10)
+                continue
+
             consumer = KafkaConsumer(
                 *topics,
                 bootstrap_servers=KAFKA_BROKERS,
@@ -169,42 +193,59 @@ def transcription_consumer_thread():
                 enable_auto_commit=True,
                 value_deserializer=lambda m: json.loads(m.decode("utf-8")),
                 key_deserializer=lambda m: m.decode("utf-8") if m else None,
-                group_id="stream-api-transcription",
-                consumer_timeout_ms=5000
+                group_id="stream-api-transcription",   # ✅ stable group id
             )
-            
-            print(f"✅ Transcription consumer connected to topics: {', '.join(topics)}")
-            
+
+            print(
+                f"✅ Transcription consumer connected to topics: {', '.join(topics)}, "
+                f"group_id={consumer.config.get('group_id')}"
+            )
+
             for message in consumer:
-                call_id = message.key or message.value.get("call_id", "unknown")
+                call_id = message.key
                 data = message.value
-                
-                # Broadcast to all queues for this call_id
+
+                if call_id:
+                    call_id = call_id.decode("utf-8") if isinstance(call_id, bytes) else str(call_id)
+                else:
+                    call_id = data.get("call_id", "unknown") if isinstance(data, dict) else "unknown"
+
+                # Mark which topic this came from (optional, but handy)
+                if isinstance(data, dict) and "source_topic" not in data:
+                    data.setdefault("source_topic", message.topic)
+
                 if call_id in transcription_queues:
                     try:
                         transcription_queues[call_id].put_nowait(data)
                     except queue.Full:
-                        pass  # Drop if queue is full
+                        print(f"⚠️ Transcription queue full for call_id: {call_id}")
+                else:
+                    # No current SSE listener for this call_id
+                    pass
+
         except Exception as e:
             print(f"❌ Error in transcription consumer: {e}")
-            import traceback
             traceback.print_exc()
-            import time
-            time.sleep(5)  # Wait before retrying
+            time.sleep(5)
+        finally:
+            if consumer is not None:
+                try:
+                    consumer.close()
+                except Exception:
+                    pass
 
+
+
+# ---------------------------------------------------------------------------
+# FastAPI lifecycle
+# ---------------------------------------------------------------------------
 
 @app.on_event("startup")
 async def startup_event():
     """Start background Kafka consumers."""
-    sentiment_thread = threading.Thread(target=sentiment_consumer_thread, daemon=True)
-    sentiment_thread.start()
-    
-    rag_thread = threading.Thread(target=rag_consumer_thread, daemon=True)
-    rag_thread.start()
-    
-    transcription_thread = threading.Thread(target=transcription_consumer_thread, daemon=True)
-    transcription_thread.start()
-    
+    threading.Thread(target=sentiment_consumer_thread, daemon=True).start()
+    threading.Thread(target=rag_consumer_thread, daemon=True).start()
+    threading.Thread(target=transcription_consumer_thread, daemon=True).start()
     print("✅ Background Kafka consumers started")
 
 
@@ -212,6 +253,10 @@ async def startup_event():
 def health():
     return {"status": "ok"}
 
+
+# ---------------------------------------------------------------------------
+# Recent messages APIs
+# ---------------------------------------------------------------------------
 
 @app.get("/recent/rag/{call_id}")
 def get_recent_rag(call_id: str):
@@ -227,128 +272,111 @@ def get_recent_sentiment(call_id: str):
     return {"call_id": call_id, "messages": messages, "count": len(messages)}
 
 
+# ---------------------------------------------------------------------------
+# SSE generators
+# ---------------------------------------------------------------------------
+
 async def sentiment_event_generator(call_id: str) -> AsyncGenerator[str, None]:
     """Generate SSE events for sentiment updates."""
-    # Create queue for this client
     q = queue.Queue(maxsize=100)
     sentiment_queues[call_id] = q
     print(f"🔌 SSE Sentiment connection opened for call_id: {call_id}")
     print(f"📋 Active Sentiment queues: {list(sentiment_queues.keys())}")
-    
+
     try:
         while True:
             try:
-                # Wait for new data with timeout
                 data = q.get(timeout=30)
-                
-                # Format as SSE
                 event_data = json.dumps(data)
                 print(f"📤 Sending Sentiment SSE event to call_id: {call_id}")
                 yield f"event: sentiment\ndata: {event_data}\n\n"
-                
             except queue.Empty:
-                # Send keepalive
+                # keepalive
                 yield f": keepalive\n\n"
-                
+
             await asyncio.sleep(0.1)
-            
     finally:
-        # Cleanup
-        if call_id in sentiment_queues:
-            del sentiment_queues[call_id]
+        sentiment_queues.pop(call_id, None)
 
 
 async def rag_event_generator(call_id: str) -> AsyncGenerator[str, None]:
     """Generate SSE events for RAG updates."""
-    # Create queue for this client
     q = queue.Queue(maxsize=100)
     rag_queues[call_id] = q
     print(f"🔌 SSE RAG connection opened for call_id: {call_id}")
     print(f"📋 Active RAG queues: {list(rag_queues.keys())}")
-    
+
     try:
         # Send cached messages first (last 10)
         cached_messages = recent_rag_messages.get(call_id, [])
         if cached_messages:
             print(f"📤 Sending {len(cached_messages)} cached RAG messages to call_id: {call_id}")
-            for data in cached_messages[-10:]:  # Send last 10 cached messages
+            for data in cached_messages[-10:]:
                 event_data = json.dumps(data)
                 yield f"event: rag\ndata: {event_data}\n\n"
-                await asyncio.sleep(0.05)  # Small delay between cached messages
-        
+                await asyncio.sleep(0.05)
+
         while True:
             try:
-                # Wait for new data with timeout
                 data = q.get(timeout=30)
-                
-                # Format as SSE
                 event_data = json.dumps(data)
                 print(f"📤 Sending RAG SSE event to call_id: {call_id}")
                 yield f"event: rag\ndata: {event_data}\n\n"
-                
             except queue.Empty:
-                # Send keepalive
                 yield f": keepalive\n\n"
-                
+
             await asyncio.sleep(0.1)
-            
     finally:
-        # Cleanup
-        if call_id in rag_queues:
-            del rag_queues[call_id]
+        rag_queues.pop(call_id, None)
 
 
 async def transcription_event_generator(call_id: str) -> AsyncGenerator[str, None]:
     """Generate SSE events for transcription updates."""
-    # Create queue for this client
     q = queue.Queue(maxsize=100)
     transcription_queues[call_id] = q
-    
+    print(f"🔌 SSE Transcription connection opened for call_id: {call_id}")
+
     try:
         while True:
             try:
-                # Wait for new data with timeout
                 data = q.get(timeout=30)
-                
-                # Format as SSE
                 event_data = json.dumps(data)
                 yield f"event: transcription\ndata: {event_data}\n\n"
-                
             except queue.Empty:
-                # Send keepalive
                 yield f": keepalive\n\n"
-                
+
             await asyncio.sleep(0.1)
-            
     finally:
-        # Cleanup
-        if call_id in transcription_queues:
-            del transcription_queues[call_id]
+        transcription_queues.pop(call_id, None)
 
 
 async def combined_event_generator(call_id: str) -> AsyncGenerator[str, None]:
     """Generate SSE events for transcription, sentiment, and RAG updates."""
-    # Create queues for this client
     sentiment_q = queue.Queue(maxsize=100)
     rag_q = queue.Queue(maxsize=100)
     transcription_q = queue.Queue(maxsize=100)
+
     sentiment_queues[call_id] = sentiment_q
     rag_queues[call_id] = rag_q
     transcription_queues[call_id] = transcription_q
+
     print(f"🔌 SSE Combined connection opened for call_id: {call_id}")
-    print(f"📋 Active queues - Sentiment: {list(sentiment_queues.keys())}, RAG: {list(rag_queues.keys())}")
-    
+    print(
+        f"📋 Active queues - Sentiment: {list(sentiment_queues.keys())}, "
+        f"RAG: {list(rag_queues.keys())}"
+    )
+
     try:
-        # Send cached RAG messages first (last 10)
+        # Cached RAG
         cached_rag = recent_rag_messages.get(call_id, [])
         if cached_rag:
             print(f"📤 Sending {len(cached_rag)} cached RAG messages to call_id: {call_id}")
-            for data in cached_rag[-10:]:  # Send last 10 cached messages
+            for data in cached_rag[-10:]:
                 event_data = json.dumps(data)
                 yield f"event: rag\ndata: {event_data}\n\n"
-                await asyncio.sleep(0.05)  # Small delay between cached messages
-        
-        # Send cached sentiment messages (last 10)
+                await asyncio.sleep(0.05)
+
+        # Cached sentiment
         cached_sentiment = recent_sentiment_messages.get(call_id, [])
         if cached_sentiment:
             print(f"📤 Sending {len(cached_sentiment)} cached sentiment messages to call_id: {call_id}")
@@ -356,11 +384,11 @@ async def combined_event_generator(call_id: str) -> AsyncGenerator[str, None]:
                 event_data = json.dumps(data)
                 yield f"event: sentiment\ndata: {event_data}\n\n"
                 await asyncio.sleep(0.05)
-        
+
         while True:
             has_data = False
-            
-            # Check transcription queue (highest priority)
+
+            # Transcription
             try:
                 data = transcription_q.get_nowait()
                 event_data = json.dumps(data)
@@ -369,8 +397,8 @@ async def combined_event_generator(call_id: str) -> AsyncGenerator[str, None]:
                 has_data = True
             except queue.Empty:
                 pass
-            
-            # Check sentiment queue
+
+            # Sentiment
             try:
                 data = sentiment_q.get_nowait()
                 event_data = json.dumps(data)
@@ -379,8 +407,8 @@ async def combined_event_generator(call_id: str) -> AsyncGenerator[str, None]:
                 has_data = True
             except queue.Empty:
                 pass
-            
-            # Check RAG queue
+
+            # RAG
             try:
                 data = rag_q.get_nowait()
                 event_data = json.dumps(data)
@@ -389,23 +417,21 @@ async def combined_event_generator(call_id: str) -> AsyncGenerator[str, None]:
                 has_data = True
             except queue.Empty:
                 pass
-            
+
             if not has_data:
-                # Send keepalive every 30 seconds
                 await asyncio.sleep(30)
                 yield f": keepalive\n\n"
             else:
                 await asyncio.sleep(0.1)
-            
     finally:
-        # Cleanup
-        if call_id in sentiment_queues:
-            del sentiment_queues[call_id]
-        if call_id in rag_queues:
-            del rag_queues[call_id]
-        if call_id in transcription_queues:
-            del transcription_queues[call_id]
+        sentiment_queues.pop(call_id, None)
+        rag_queues.pop(call_id, None)
+        transcription_queues.pop(call_id, None)
 
+
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
 
 @app.get("/stream/sentiment/{call_id}")
 async def stream_sentiment(call_id: str, request: Request):
@@ -416,8 +442,8 @@ async def stream_sentiment(call_id: str, request: Request):
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"
-        }
+            "X-Accel-Buffering": "no",
+        },
     )
 
 
@@ -430,8 +456,8 @@ async def stream_rag(call_id: str, request: Request):
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"
-        }
+            "X-Accel-Buffering": "no",
+        },
     )
 
 
@@ -444,8 +470,8 @@ async def stream_transcription(call_id: str, request: Request):
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"
-        }
+            "X-Accel-Buffering": "no",
+        },
     )
 
 
@@ -458,12 +484,11 @@ async def stream_all(call_id: str, request: Request):
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"
-        }
+            "X-Accel-Buffering": "no",
+        },
     )
 
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8003)
-

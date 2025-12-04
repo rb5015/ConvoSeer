@@ -8,6 +8,7 @@ import time
 from typing import Dict, Any, List
 import requests
 from kafka import KafkaConsumer, KafkaProducer
+from kafka.errors import NoBrokersAvailable
 from dotenv import load_dotenv
 
 
@@ -119,22 +120,32 @@ def main() -> None:
     print(f"RAG topic: {RAG_TOPIC}")
     print(f"RAG service: {RAG_URL}")
     
-    # Initialize Kafka consumer and producer
-    consumer = KafkaConsumer(
-        SENTIMENT_TOPIC,
-        bootstrap_servers=KAFKA_BROKERS,
-        auto_offset_reset="latest",
-        enable_auto_commit=True,
-        value_deserializer=lambda m: json.loads(m.decode("utf-8")),
-        key_deserializer=lambda m: m.decode("utf-8") if m else None,
-        group_id="rag-stream-worker"
-    )
-    
-    producer = KafkaProducer(
-        bootstrap_servers=KAFKA_BROKERS,
-        value_serializer=lambda v: v if isinstance(v, bytes) else json.dumps(v).encode("utf-8"),
-        key_serializer=lambda k: k.encode("utf-8") if isinstance(k, str) else k
-    )
+    # Initialize Kafka consumer and producer with retry/backoff
+    backoff = 1
+    while True:
+        try:
+            consumer = KafkaConsumer(
+                SENTIMENT_TOPIC,
+                bootstrap_servers=KAFKA_BROKERS,
+                auto_offset_reset="latest",
+                enable_auto_commit=True,
+                value_deserializer=lambda m: json.loads(m.decode("utf-8")),
+                key_deserializer=lambda m: m.decode("utf-8") if m else None,
+                group_id="rag-stream-worker"
+            )
+            
+            producer = KafkaProducer(
+                bootstrap_servers=KAFKA_BROKERS,
+                value_serializer=lambda v: v if isinstance(v, bytes) else json.dumps(v).encode("utf-8"),
+                key_serializer=lambda k: k.encode("utf-8") if isinstance(k, str) else k
+            )
+            
+            print("✅ Connected to Kafka")
+            break
+        except NoBrokersAvailable:
+            print(f"⚠️  Kafka brokers not available at '{KAFKA_BROKERS}', retrying in {backoff}s...")
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 30)
     
     print("✅ Connected to Kafka")
     print("🎧 Listening for sentiment windows...\n")
