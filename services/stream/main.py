@@ -53,7 +53,7 @@ def sentiment_consumer_thread():
                 value_deserializer=lambda m: json.loads(m.decode("utf-8")),
                 key_deserializer=lambda m: m.decode("utf-8") if m else None,
                 group_id="stream-api-sentiment",
-                consumer_timeout_ms=5000
+                # consumer_timeout_ms=5000
             )
             print(f"✅ Sentiment consumer connected to {SENTIMENT_TOPIC}")
             
