@@ -15,10 +15,14 @@ MONGODB_URI = os.getenv("MONGODB_URI", "")
 MONGODB_DB = os.getenv("MONGODB_DB", "agent_assist")
 MONGODB_COLLECTION = os.getenv("MONGODB_COLLECTION", "utterances")
 BATCH_SIZE = int(os.getenv("EMBED_BATCH", "64"))
+EMBED_TIMEOUT = int(os.getenv("EMBED_TIMEOUT", "300"))  # 5 minutes default for large batches
 
 
-def embed_batch(texts: List[str], timeout: int = 60, max_retries: int = 5) -> List[List[float]]:
+def embed_batch(texts: List[str], timeout: int = None, max_retries: int = 5) -> List[List[float]]:
     """Call the embedder service with a simple retry/backoff on connection errors."""
+    if timeout is None:
+        timeout = EMBED_TIMEOUT
+    print(f"⏱️  Using timeout: {timeout}s for batch of {len(texts)} texts")
     backoff = 1
     attempt = 0
     while True:
@@ -86,7 +90,9 @@ def main() -> None:
 
 def flush_buffer(buf: List[Dict[str, Any]], col) -> None:
     texts = [rec.get("text", "") for rec in buf]
+    print(f"📦 Processing batch of {len(texts)} texts for embedding...")
     embeddings = embed_batch(texts)
+    print(f"✅ Generated {len(embeddings)} embeddings")
     ops = []
     for rec, vec in zip(buf, embeddings):
         doc = dict(rec)

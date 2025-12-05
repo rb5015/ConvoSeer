@@ -124,13 +124,11 @@ python3 scripts/prepare_dataset.py
 ### 5. Start services
 
 ```bash
-# Build and start all services
-docker compose up -d embedder embedder-worker rag ui
+# Build and start all services (Spark streaming auto-starts)
+docker compose up -d spark-master spark-worker spark-streaming embedder embedder-worker rag ui
 
-# Start Spark streaming job
-docker compose exec spark-master spark-submit \
-  --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0 \
-  /workspace/streaming/app.py
+# Spark streaming now starts automatically via docker-compose service
+# For manual control, see scripts/start_spark_streaming.sh
 ```
 
 ### 6. Ingest data

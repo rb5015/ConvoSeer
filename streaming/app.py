@@ -3,7 +3,8 @@ import requests
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import (
     col, from_json, to_json, struct, udf, lit, window, 
-    avg, count, collect_list, max as spark_max, min as spark_min, concat_ws
+    avg, count, collect_list, max as spark_max, min as spark_min, concat_ws,
+    unix_timestamp
 )
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, LongType, MapType, TimestampType
 
@@ -34,14 +35,24 @@ def clean_text(txt: str) -> str:
     return " ".join(t.split())
 
 from pyspark.sql.types import StructType as S, StructField as F, DoubleType
-sentiment_schema = S([F("score", DoubleType(), False), F("label", StringType(), False)])
+sentiment_schema = S([F("score", DoubleType(), True), F("label", StringType(), True)])
 
 from pyspark.sql.functions import pandas_udf, PandasUDFType
 import pandas as pd
+import time
+
+# Process texts in small batches to avoid overwhelming sentiment service
+SENTIMENT_BATCH_SIZE = 5  # Process 5 texts at a time
+SENTIMENT_TIMEOUT = 60  # Increased timeout for batch processing
+SENTIMENT_MAX_RETRIES = 3
 
 @pandas_udf(sentiment_schema, PandasUDFType.SCALAR)
 def qwen_sentiment_udf(texts: pd.Series) -> pd.DataFrame:
-    """Call sentiment service to analyze sentiment for batch of texts."""
+    """Call sentiment service to analyze sentiment for batch of texts.
+    
+    Processes texts in small chunks to avoid overwhelming the sentiment service
+    which can cause OOM errors when processing large batches.
+    """
     scores = []
     labels = []
     
@@ -51,46 +62,83 @@ def qwen_sentiment_udf(texts: pd.Series) -> pd.DataFrame:
     
     if not non_empty_texts:
         # Return neutral for all empty texts
-        return pd.DataFrame({"score": [0.0] * len(text_list), "label": ["NEU"] * len(text_list)})
+        return pd.DataFrame({
+            "score": [0.0] * len(text_list),
+            "label": ["NEU"] * len(text_list)
+        })
     
-    try:
-        # Call sentiment service
-        response = requests.post(
-            f"{SENTIMENT_URL}/analyze",
-            json={"texts": non_empty_texts},
-            timeout=30
-        )
-        response.raise_for_status()
-        data = response.json()
+    # Process in small batches to avoid overwhelming sentiment service
+    result_map = {}
+    
+    for batch_start in range(0, len(non_empty_texts), SENTIMENT_BATCH_SIZE):
+        batch_end = min(batch_start + SENTIMENT_BATCH_SIZE, len(non_empty_texts))
+        batch_texts = non_empty_texts[batch_start:batch_end]
         
-        # Map results back to original list (handling empty texts)
-        result_map = {}
-        for i, result in enumerate(data.get("results", [])):
-            if i < len(non_empty_texts):
-                result_map[non_empty_texts[i]] = (result.get("score", 0.0), result.get("label", "NEU"))
+        # Retry logic for each batch
+        batch_results = None
+        for attempt in range(SENTIMENT_MAX_RETRIES):
+            try:
+                # Call sentiment service with small batch
+                response = requests.post(
+                    f"{SENTIMENT_URL}/analyze",
+                    json={"texts": batch_texts},
+                    timeout=SENTIMENT_TIMEOUT
+                )
+                response.raise_for_status()
+                data = response.json()
+                batch_results = data.get("results", [])
+                break  # Success, exit retry loop
+                
+            except Exception as e:
+                if attempt < SENTIMENT_MAX_RETRIES - 1:
+                    # Wait before retry (exponential backoff)
+                    wait_time = 2 ** attempt
+                    print(f"⚠️  Sentiment service error (attempt {attempt + 1}/{SENTIMENT_MAX_RETRIES}): {e}. Retrying in {wait_time}s...")
+                    time.sleep(wait_time)
+                else:
+                    # Final attempt failed
+                    print(f"❌ Sentiment service failed after {SENTIMENT_MAX_RETRIES} attempts: {e}")
+                    batch_results = None
         
-        # Build results matching original order
-        for t in text_list:
-            if t and t.strip() and t in result_map:
-                score, label = result_map[t]
-                scores.append(float(score))
-                labels.append(str(label).upper())
-            else:
-                scores.append(0.0)
-                labels.append("NEU")
+        # Map batch results
+        if batch_results:
+            for i, result in enumerate(batch_results):
+                if i < len(batch_texts):
+                    result_map[batch_texts[i]] = (result.get("score", 0.0), result.get("label", "NEU"))
+        else:
+            # If batch failed, use neutral sentiment
+            for text in batch_texts:
+                result_map[text] = (0.0, "NEU")
     
-    except Exception as e:
-        # On error, return neutral sentiment for all
-        print(f"Error calling sentiment service: {e}")
-        scores = [0.0] * len(text_list)
-        labels = ["NEU"] * len(text_list)
+    # Build results matching original order
+    for t in text_list:
+        if t and t.strip() and t in result_map:
+            score, label = result_map[t]
+            scores.append(float(score))
+            labels.append(str(label).upper())
+        else:
+            scores.append(0.0)
+            labels.append("NEU")
     
-    return pd.DataFrame({"score": scores, "label": labels})
+    return pd.DataFrame({
+        "score": scores,
+        "label": labels
+    })
 
 clean_udf = udf(clean_text, StringType())
 
 
 def main() -> None:
+    print(f"🚀 Starting Spark Streaming Application")
+    print(f"   Kafka brokers: {BROKERS}")
+    print(f"   Raw topic: {RAW_TOPIC}")
+    print(f"   Enriched topic: {ENRICHED_TOPIC}")
+    print(f"   Sentiment topic: {SENTIMENT_TOPIC}")
+    print(f"   Sentiment URL: {SENTIMENT_URL}")
+    print(f"   Window size: {WINDOW_SECONDS} seconds")
+    print(f"   Sentiment batch size: {SENTIMENT_BATCH_SIZE}")
+    print("")
+    
     spark = (
         SparkSession.builder
         .appName("AgentAssistStreaming")
@@ -104,6 +152,7 @@ def main() -> None:
         .option("kafka.bootstrap.servers", BROKERS)
         .option("subscribe", RAW_TOPIC)
         .option("startingOffsets", "latest")
+        .option("failOnDataLoss", "false")  # Don't fail when offsets reset (e.g., after topic clearing)
         .load()
     )
     parsed = df.selectExpr("CAST(key AS STRING) as key", "CAST(value AS STRING) as value") \
@@ -136,7 +185,11 @@ def main() -> None:
     )
 
     # Write enriched stream to calls.enriched
-    out_enriched = enriched.select(to_json(struct(*enriched.columns)).alias("value"))
+    # Include call_id as key for proper Kafka partitioning (matches Python worker behavior)
+    out_enriched = enriched.select(
+        col("call_id").alias("key"),
+        to_json(struct(*enriched.columns)).alias("value")
+    )
     qs_enriched = (
         out_enriched.writeStream
         .format("kafka")
@@ -171,8 +224,9 @@ def main() -> None:
         )
         .select(
             col("call_id"),
-            col("window.start").alias("window_start"),
-            col("window.end").alias("window_end"),
+            # Convert window timestamps to Unix seconds (int) to match Python worker format
+            unix_timestamp(col("window.start")).cast("int").alias("window_start"),
+            unix_timestamp(col("window.end")).cast("int").alias("window_end"),
             col("window_start_time"),
             col("window_end_time"),
             col("avg_sentiment_score"),

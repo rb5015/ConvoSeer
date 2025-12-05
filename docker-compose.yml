@@ -42,13 +42,15 @@ services:
       - default
 
   spark-worker:
-    image: apache/spark:3.5.0
+    build: ./spark-worker
     container_name: spark-worker
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
     environment:
       - SPARK_WORKER_MEMORY=2g
       - SPARK_WORKER_CORES=2
       - SPARK_WORKER_WEBUI_PORT=8081
+      - PYSPARK_PYTHON=python3
+      - PYSPARK_DRIVER_PYTHON=python3
     ports:
       - "8081:8081"
     depends_on:
@@ -136,14 +138,52 @@ services:
     depends_on:
       - kafka
 
-  streaming-worker:
-    build: ./services/streaming_worker
-    container_name: streaming-worker
+  # streaming-worker: DISABLED - Migrated to Spark Streaming
+  # To re-enable: uncomment below and disable spark-streaming service
+  # streaming-worker:
+  #   build: ./services/streaming_worker
+  #   container_name: streaming-worker
+  #   env_file:
+  #     - .env
+  #   depends_on:
+  #     - kafka
+  #     - sentiment
+  #   restart: unless-stopped
+
+  spark-streaming:
+    build: ./streaming
+    container_name: spark-streaming
+    user: root
+    entrypoint: ["/bin/bash", "-c"]
+    command: >
+      "
+      mkdir -p /home/spark/.ivy2/cache /home/spark/.ivy2/jars && 
+      chown -R spark:spark /home/spark/.ivy2 && 
+      echo 'Waiting for Kafka to be ready...' && 
+      until nc -z kafka 29092 2>/dev/null; do sleep 2; done && 
+      echo 'Kafka is ready, starting Spark streaming...' && 
+      exec gosu spark /opt/spark/bin/spark-submit
+      --master spark://spark-master:7077
+      --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0
+      --conf spark.sql.streaming.checkpointLocation=/tmp/spark-checkpoints
+      --conf spark.pyspark.python=python3
+      --conf spark.pyspark.driver.python=python3
+      /opt/spark/work-dir/app.py"
     env_file:
       - .env
+    environment:
+      - PYSPARK_PYTHON=python3
+      - PYSPARK_DRIVER_PYTHON=python3
     depends_on:
+      - spark-master
+      - spark-worker
       - kafka
       - sentiment
+    volumes:
+      - ./streaming:/opt/spark/work-dir
+      - spark-ivy-cache:/home/spark/.ivy2
+    networks:
+      - default
     restart: unless-stopped
 
   audio-service:
@@ -196,4 +236,6 @@ services:
     depends_on:
       - kafka
 
+volumes:
+  spark-ivy-cache:
 

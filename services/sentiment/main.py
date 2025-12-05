@@ -2,12 +2,20 @@ from typing import List, Dict, Any
 import os
 import json
 import re
+import logging
+import threading
 import torch
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from cachetools import LRUCache
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from transformers import AutoModelForCausalLM, AutoTokenizer
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
+# Lock for thread-safe model loading
+_model_lock = threading.Lock()
 
 try:
     from .prompts import SENTIMENT_SYSTEM_PROMPT, build_sentiment_prompt
@@ -50,20 +58,27 @@ def health() -> Dict[str, str]:
 
 
 def _get_model_and_tokenizer(model_name: str):
-    """Lazy load model and tokenizer."""
+    """Lazy load model and tokenizer (thread-safe)."""
     global _tokenizer, _model
     if _tokenizer is None or _model is None:
-        print(f"Loading Qwen sentiment model: {model_name} on {DEVICE}")
-        _tokenizer = AutoTokenizer.from_pretrained(model_name)
-        _model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            torch_dtype=torch.float16 if DEVICE == "cuda" else torch.float32,
-            device_map="auto" if DEVICE == "cuda" else None,
-        )
-        if DEVICE == "cpu":
-            _model.to(DEVICE)
-        _model.eval()
-        print(f"✅ Sentiment model loaded successfully")
+        with _model_lock:
+            # Double-check pattern to avoid race condition
+            if _tokenizer is None or _model is None:
+                logger.info(f"Loading Qwen sentiment model: {model_name} on {DEVICE}")
+                try:
+                    _tokenizer = AutoTokenizer.from_pretrained(model_name)
+                    _model = AutoModelForCausalLM.from_pretrained(
+                        model_name,
+                        torch_dtype=torch.float16 if DEVICE == "cuda" else torch.float32,
+                        device_map="auto" if DEVICE == "cuda" else None,
+                    )
+                    if DEVICE == "cpu":
+                        _model.to(DEVICE)
+                    _model.eval()
+                    logger.info(f"✅ Sentiment model loaded successfully")
+                except Exception as e:
+                    logger.error(f"Failed to load model: {e}")
+                    raise
     return _tokenizer, _model
 
 
@@ -168,52 +183,61 @@ def _parse_sentiment_response(response_text: str, original_text: str = "") -> tu
 )
 def _analyze_sentiment_batch(texts: List[str], model_name: str) -> List[tuple[float, str]]:
     """Analyze sentiment for a batch of texts using Qwen LLM."""
-    tokenizer, model = _get_model_and_tokenizer(model_name)
-    results = []
-    
-    for text in texts:
-        if not text or not text.strip():
-            results.append((0.0, "NEU"))
-            continue
+    try:
+        logger.info(f"Starting sentiment analysis for {len(texts)} texts")
+        tokenizer, model = _get_model_and_tokenizer(model_name)
+        results = []
         
-        # Build prompt
-        user_prompt = build_sentiment_prompt(text.strip())
-        messages = [
-            {"role": "system", "content": SENTIMENT_SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt}
-        ]
-        
-        # Apply chat template
-        formatted_text = tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True
-        )
-        
-        # Tokenize
-        model_inputs = tokenizer([formatted_text], return_tensors="pt", truncation=True, max_length=MAX_LENGTH)
-        model_inputs = {k: v.to(model.device) for k, v in model_inputs.items()}
-        
-        # Generate
-        with torch.no_grad():
-            generated_ids = model.generate(
-                **model_inputs,
-                max_new_tokens=MAX_NEW_TOKENS,
-                temperature=0.3,
-                do_sample=True,
-                pad_token_id=tokenizer.eos_token_id
+        for text in texts:
+            if not text or not text.strip():
+                results.append((0.0, "NEU"))
+                continue
+            
+            # Build prompt
+            user_prompt = build_sentiment_prompt(text.strip())
+            messages = [
+                {"role": "system", "content": SENTIMENT_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt}
+            ]
+            
+            # Apply chat template
+            formatted_text = tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True
             )
+            
+            # Tokenize
+            model_inputs = tokenizer([formatted_text], return_tensors="pt", truncation=True, max_length=MAX_LENGTH)
+            model_inputs = {k: v.to(model.device) for k, v in model_inputs.items()}
+            
+            # Generate
+            with torch.no_grad():
+                generated_ids = model.generate(
+                    **model_inputs,
+                    max_new_tokens=MAX_NEW_TOKENS,
+                    temperature=0.3,
+                    do_sample=True,
+                    pad_token_id=tokenizer.eos_token_id
+                )
+            
+            # Decode response
+            input_length = model_inputs["input_ids"].shape[1]
+            output_ids = generated_ids[0][input_length:].tolist()
+            response = tokenizer.decode(output_ids, skip_special_tokens=True)
+            
+            # Parse sentiment (pass original text for keyword validation)
+            score, label = _parse_sentiment_response(response, original_text=text.strip())
+            results.append((score, label))
+            
+            logger.info(f"Analyzed text: '{text[:50]}...' -> score={score}, label={label}")
         
-        # Decode response
-        input_length = model_inputs["input_ids"].shape[1]
-        output_ids = generated_ids[0][input_length:].tolist()
-        response = tokenizer.decode(output_ids, skip_special_tokens=True)
-        
-        # Parse sentiment (pass original text for keyword validation)
-        score, label = _parse_sentiment_response(response, original_text=text.strip())
-        results.append((score, label))
-    
-    return results
+        return results
+    except Exception as e:
+        import traceback
+        logger.error(f"Error in _analyze_sentiment_batch: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise
 
 
 @app.post("/analyze", response_model=SentimentResponse)
@@ -253,7 +277,11 @@ def analyze(req: SentimentRequest) -> Any:
                 _cache[cache_key] = (score, label)
                 results[idx] = (score, label)
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Sentiment analysis failed: {str(e)}")
+            import traceback
+            error_msg = f"Sentiment analysis failed: {str(e)}"
+            logger.error(f"❌ Sentiment analysis error: {error_msg}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            raise HTTPException(status_code=500, detail=error_msg)
     
     # Convert to response format
     sentiment_results = [SentimentResult(score=score, label=label) for score, label in results]
