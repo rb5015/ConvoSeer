@@ -33,7 +33,7 @@ class SentimentResponse(BaseModel):
 
 app = FastAPI(title="Sentiment Analysis Service", version="0.1.0")
 
-DEFAULT_MODEL = os.getenv("SENTIMENT_MODEL", "Qwen/Qwen2.5-0.5B-Instruct")
+DEFAULT_MODEL = os.getenv("SENTIMENT_MODEL", "meta-llama/Meta-Llama-3.1-8B-Instruct")
 MAX_LENGTH = int(os.getenv("SENTIMENT_MAX_LENGTH", "4096"))
 DEVICE = os.getenv("SENTIMENT_DEVICE", "cuda" if torch.cuda.is_available() else "cpu")
 MAX_NEW_TOKENS = int(os.getenv("SENTIMENT_MAX_NEW_TOKENS", "128"))
