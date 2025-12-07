@@ -17,7 +17,7 @@ class AudioConfig:
     """Audio capture configuration."""
     sample_rate: int = 16000  # Whisper expects 16kHz
     channels: int = 1  # Mono
-    chunk_duration: float = 5.0  # seconds per chunk
+    chunk_duration: float = 9.0  # seconds per chunk
     format: int = pyaudio.paInt16
     
     @property
