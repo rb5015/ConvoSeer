@@ -138,7 +138,7 @@ function App() {
             <Stack direction="row" spacing={2} alignItems="center" justifyContent="flex-end">
               <Chip {...getStatusChipProps()} />
               <Stack direction="row" spacing={1} alignItems="center">
-                <Typography variant="body2" color="text.secondary">
+                <Typography variant="body2" color="primary.contrastText">
                   Utterances
                 </Typography>
                 <Typography variant="h6" sx={{ letterSpacing: 0.5 }}>
@@ -154,17 +154,21 @@ function App() {
       </Box>
 
       <Container maxWidth="lg" sx={{ py: { xs: 4, md: 8 } }}>
-        <Grid container spacing={4}>
-          <Grid item xs={12} lg={5}>
-            <Card>
+        <Stack
+          direction={{ xs: 'column', md: 'row' }}
+          spacing={4}
+          alignItems="stretch"
+        >
+          <Box sx={{ flex: 1, display: 'flex' }}>
+            <Card sx={{ width: '100%', display: 'flex', flexDirection: 'column' }}>
               <CardHeader
                 title="Live Transcript"
                 subheader="Capture audio and preview the latest utterances below."
                 titleTypographyProps={{ variant: 'h5', fontWeight: 600 }}
                 subheaderTypographyProps={{ color: 'text.secondary' }}
               />
-              <CardContent>
-                <Stack spacing={3}>
+              <CardContent sx={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                <Stack spacing={3} sx={{ flex: 1 }}>
                   <AudioRecorder
                     callId={callId}
                     onTranscription={handleTranscription}
@@ -175,19 +179,16 @@ function App() {
                 </Stack>
               </CardContent>
             </Card>
-          </Grid>
+          </Box>
 
-          <Grid item xs={12} lg={7}>
-            <Grid container spacing={3}>
-              <Grid item xs={12} md={6}>
-                <SentimentPanel sentimentHistory={sentimentHistory} />
-              </Grid>
-              <Grid item xs={12} md={6}>
-                <RAGPanel ragSuggestions={ragSuggestions} />
-              </Grid>
-            </Grid>
-          </Grid>
-        </Grid>
+          <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+            <SentimentPanel sentimentHistory={sentimentHistory} />
+          </Box>
+
+          <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+            <RAGPanel ragSuggestions={ragSuggestions} />
+          </Box>
+        </Stack>
       </Container>
 
       <Box
