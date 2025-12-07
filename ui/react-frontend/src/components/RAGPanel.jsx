@@ -33,7 +33,7 @@ export function RAGPanel({ ragSuggestions }) {
       : latestRAG.query_text || latestRAG.latest_utterance || 'N/A';
 
   return (
-    <Card sx={{ height: '100%' }}>
+    <Card sx={{ height: '100%', width: '100%', overflow: 'hidden' }}>
       <CardContent>
         <Stack spacing={3}>
           <Box

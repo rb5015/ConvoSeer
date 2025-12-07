@@ -43,7 +43,7 @@ export function SentimentPanel({ sentimentHistory }) {
   const sentimentColor = getSentimentColor(score);
 
   return (
-    <Card sx={{ height: '100%' }}>
+    <Card sx={{ height: '100%', width: '100%', overflow: 'hidden' }}>
       <CardContent>
         <Stack spacing={3}>
           <Stack direction="row" alignItems="center" justifyContent="space-between">

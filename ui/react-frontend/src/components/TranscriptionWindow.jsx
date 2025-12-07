@@ -29,7 +29,9 @@ export function TranscriptionWindow({ transcriptions }) {
         p: 2,
         maxHeight: 320,
         overflowY: 'auto',
+        overflowX: 'hidden',
         backgroundColor: 'background.paper',
+        width: '100%',
       }}
     >
       {transcriptions.length ? (
@@ -49,7 +51,7 @@ export function TranscriptionWindow({ transcriptions }) {
               <Typography variant="caption" color="text.secondary">
                 [{trans.timestamp || '—'}]
               </Typography>
-              <Typography variant="body1" color="text.primary">
+              <Typography variant="body1" color="text.primary" sx={{ wordBreak: 'break-word', overflowWrap: 'break-word' }}>
                 {trans.text}
               </Typography>
             </Box>

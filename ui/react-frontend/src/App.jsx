@@ -159,16 +159,16 @@ function App() {
           spacing={4}
           alignItems="stretch"
         >
-          <Box sx={{ flex: 1, display: 'flex' }}>
-            <Card sx={{ width: '100%', display: 'flex', flexDirection: 'column' }}>
+          <Box sx={{ width: { xs: '100%', md: 'calc((100% - 4rem) / 3)' }, flexShrink: 0, display: 'flex' }}>
+            <Card sx={{ width: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
               <CardHeader
                 title="Live Transcript"
                 subheader="Capture audio and preview the latest utterances below."
                 titleTypographyProps={{ variant: 'h5', fontWeight: 600 }}
                 subheaderTypographyProps={{ color: 'text.secondary' }}
               />
-              <CardContent sx={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-                <Stack spacing={3} sx={{ flex: 1 }}>
+              <CardContent sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                <Stack spacing={3} sx={{ flex: 1, overflow: 'hidden' }}>
                   <AudioRecorder
                     callId={callId}
                     onTranscription={handleTranscription}
@@ -181,11 +181,11 @@ function App() {
             </Card>
           </Box>
 
-          <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+          <Box sx={{ width: { xs: '100%', md: 'calc((100% - 4rem) / 3)' }, flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
             <SentimentPanel sentimentHistory={sentimentHistory} />
           </Box>
 
-          <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+          <Box sx={{ width: { xs: '100%', md: 'calc((100% - 4rem) / 3)' }, flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
             <RAGPanel ragSuggestions={ragSuggestions} />
           </Box>
         </Stack>
