@@ -1,60 +1,58 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
 import { useAudioUpload } from '../hooks/useAudioUpload';
+import {
+  Alert,
+  Button,
+  Chip,
+  CircularProgress,
+  Stack,
+  Typography,
+} from '@mui/material';
 
 export function AudioRecorder({ callId, onTranscription, onRecordingChange }) {
   const [utteranceIndex, setUtteranceIndex] = useState(0);
   const [statusMessage, setStatusMessage] = useState('');
   const lastSentBlobRef = useRef(null);
-  
-  // Use 6 seconds interval to capture longer audio chunks
-  const { isRecording, audioBlob, error: recorderError, startRecording, stopRecording } = useAudioRecorder(6000);
+
+  const { isRecording, audioBlob, error: recorderError, startRecording, stopRecording } =
+    useAudioRecorder(6000);
   const { uploadAudio, uploading, error: uploadError } = useAudioUpload();
 
-  // Notify parent of recording state changes
   useEffect(() => {
     if (onRecordingChange) {
       onRecordingChange(isRecording);
     }
   }, [isRecording, onRecordingChange]);
 
-  // Handle audio blob changes and upload
   useEffect(() => {
     if (!isRecording || !audioBlob) {
       return;
     }
-    
+
     if (uploading) {
-      console.log('⏳ Upload already in progress, waiting...');
+      console.log('⏳ Upload in progress, waiting...');
       return;
     }
 
-    // Minimum size check - for 6 seconds of WebM audio, expect at least 10KB
-    const MIN_CHUNK_SIZE = 10000; // 10KB minimum for meaningful audio
+    const MIN_CHUNK_SIZE = 10000;
     if (audioBlob.size < MIN_CHUNK_SIZE) {
-      console.log(`⚠️ Audio chunk too small to send: ${audioBlob.size} bytes`);
+      console.log('⚠️ Audio chunk too small to send');
       return;
     }
 
     const processAudio = async () => {
-      // Check if this is the same blob object as last time (prevent duplicate sends)
       if (audioBlob === lastSentBlobRef.current) {
-        console.log('⚠️ Same blob reference, skipping duplicate send');
-        return; // Same blob, skip
+        return;
       }
-      
-      // Mark this blob as being processed
+
       lastSentBlobRef.current = audioBlob;
-      console.log(`🚀 Processing new audio chunk: ${audioBlob.size} bytes (${(audioBlob.size / 1024).toFixed(2)} KB)`);
-      
-      const audioSizeMB = audioBlob.size / (1024 * 1024);
-      setStatusMessage(`🔄 Sending ${audioBlob.size.toLocaleString()} bytes (${audioSizeMB.toFixed(2)} MB) to backend...`);
-      
+      setStatusMessage(`🔄 Sending ${(audioBlob.size / 1024).toFixed(1)} KB chunk...`);
+
       try {
         const result = await uploadAudio(audioBlob, callId, utteranceIndex);
-        
+
         if (result && result.published && result.text) {
-          // Add transcription directly to UI
           const transcription = {
             text: result.text,
             utterance_id: result.utterance_id || `${callId}:${utteranceIndex}`,
@@ -62,36 +60,30 @@ export function AudioRecorder({ callId, onTranscription, onRecordingChange }) {
             index: utteranceIndex,
             sentiment: 'NEU',
           };
-          
+
           onTranscription(transcription);
-          setUtteranceIndex(prev => prev + 1);
-          setStatusMessage(`✓ Sent: "${result.text.substring(0, 50)}${result.text.length > 50 ? '...' : ''}"`);
-          
-          // Clear status message after 3 seconds
-          setTimeout(() => {
-            setStatusMessage('');
-          }, 3000);
+          setUtteranceIndex((prev) => prev + 1);
+          setStatusMessage(
+            `✓ Sent: "${result.text.substring(0, 60)}${result.text.length > 60 ? '...' : ''}"`,
+          );
+          setTimeout(() => setStatusMessage(''), 3000);
         } else if (result && result.text) {
           setStatusMessage('⚠️ Transcribed but not published to Kafka');
         } else if (result === null) {
-          // Upload failed
-          setStatusMessage('❌ Failed to upload audio. Will retry with next chunk...');
+          setStatusMessage('❌ Failed to upload audio. Retrying with next chunk...');
         } else if (result && !result.text) {
-          // No speech detected in this chunk
-          const audioSizeKB = (audioBlob.size / 1024).toFixed(1);
-          setStatusMessage(`ℹ️ No speech detected in ${audioSizeKB}KB chunk. Keep speaking...`);
+          setStatusMessage('ℹ️ No speech detected in this chunk. Keep speaking...');
         } else {
           setStatusMessage('ℹ️ Processing audio...');
         }
       } catch (err) {
         console.error('Error processing audio:', err);
-        // Don't set error status immediately - will retry with next chunk
         setStatusMessage('ℹ️ Processing...');
       }
     };
 
     processAudio();
-  }, [audioBlob, isRecording, callId, utteranceIndex, uploadAudio, onTranscription, uploading]);
+  }, [audioBlob, callId, isRecording, utteranceIndex, uploadAudio, uploading, onTranscription]);
 
   const handleStart = () => {
     setUtteranceIndex(0);
@@ -107,69 +99,71 @@ export function AudioRecorder({ callId, onTranscription, onRecordingChange }) {
 
   const error = recorderError || uploadError;
 
+  const determineStatusColor = () => {
+    if (!statusMessage) {
+      return 'text.secondary';
+    }
+
+    if (statusMessage.startsWith('✓')) return 'success.main';
+    if (statusMessage.startsWith('⚠️')) return 'warning.main';
+    if (statusMessage.startsWith('❌')) return 'error.main';
+    return 'text.primary';
+  };
+
   return (
-    <div className="space-y-4">
-      <div className="flex gap-4 items-center">
+    <Stack spacing={3}>
+      <Stack
+        direction={{ xs: 'column', sm: 'row' }}
+        spacing={2}
+        alignItems="center"
+        justifyContent="space-between"
+      >
         {!isRecording ? (
-          <button
-            onClick={handleStart}
-            className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors"
-          >
-            🎤 Start Recording
-          </button>
+          <Button fullWidth variant="contained" color="primary" onClick={handleStart}>
+            🎤 Start recording
+          </Button>
         ) : (
-          <button
-            onClick={handleStop}
-            className="flex-1 bg-red-600 hover:bg-red-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors"
-          >
-            ⏹️ Stop Recording
-          </button>
+          <Button fullWidth variant="contained" color="error" onClick={handleStop}>
+            ⏹️ Stop recording
+          </Button>
         )}
         {isRecording && (
-          <div className="text-sm text-gray-600">
-            Index: {utteranceIndex}
-          </div>
+          <Chip label={`Index: ${utteranceIndex}`} color="secondary" variant="outlined" />
         )}
-      </div>
+      </Stack>
 
       {isRecording && (
-        <>
-          <p className="text-sm text-gray-600">
-            🎤 Recording... Speak clearly. Audio chunks are automatically sent every 6 seconds.
-          </p>
-          
+        <Stack spacing={1} px={0.5}>
+          <Typography variant="body2" color="text.secondary">
+            🎤 Recording... Audio chunks ship every ~6 seconds while you speak.
+          </Typography>
           {audioBlob && (
-            <p className="text-sm text-gray-500">
-              📊 Audio buffer: {audioBlob.size.toLocaleString()} bytes ({(audioBlob.size / (1024 * 1024)).toFixed(2)} MB)
-            </p>
+            <Typography variant="body2" color="text.secondary">
+              📊 Buffer: {audioBlob.size.toLocaleString()} B (
+              {(audioBlob.size / (1024 * 1024)).toFixed(2)} MB)
+            </Typography>
           )}
-          
           {statusMessage && (
-            <p className={`text-sm ${
-              statusMessage.startsWith('✓') ? 'text-green-600' :
-              statusMessage.startsWith('⚠️') ? 'text-yellow-600' :
-              statusMessage.startsWith('❌') ? 'text-red-600' :
-              'text-blue-600'
-            }`}>
+            <Typography variant="body2" color={determineStatusColor()}>
               {statusMessage}
-            </p>
+            </Typography>
           )}
-          
           {uploading && (
-            <div className="flex items-center gap-2 text-sm text-blue-600">
-              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-              Uploading...
-            </div>
+            <Stack direction="row" spacing={1} alignItems="center">
+              <CircularProgress size={16} />
+              <Typography variant="body2" color="text.secondary">
+                Uploading...
+              </Typography>
+            </Stack>
           )}
-        </>
+        </Stack>
       )}
 
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+        <Alert severity="error" variant="outlined">
           {error}
-        </div>
+        </Alert>
       )}
-    </div>
+    </Stack>
   );
 }
-

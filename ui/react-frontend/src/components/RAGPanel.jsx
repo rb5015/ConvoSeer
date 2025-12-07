@@ -1,63 +1,112 @@
+import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
+  Box,
+  Card,
+  CardContent,
+  Divider,
+  Stack,
+  Typography,
+} from '@mui/material';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+
 export function RAGPanel({ ragSuggestions }) {
   const latestRAG = ragSuggestions[ragSuggestions.length - 1];
   const ragResponse = latestRAG?.rag_response || {};
 
+  if (!latestRAG) {
+    return (
+      <Card>
+        <CardContent>
+          <Typography variant="body2" color="text.secondary">
+            Suggestions appear every ~10 seconds once transcription data flows to the RAG worker.
+          </Typography>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const contextSnippet =
+    (latestRAG.query_text || latestRAG.latest_utterance || '').length > 80
+      ? `${(latestRAG.query_text || latestRAG.latest_utterance).substring(0, 80)}...`
+      : latestRAG.query_text || latestRAG.latest_utterance || 'N/A';
+
   return (
-    <div className="space-y-4">
-      {latestRAG ? (
-        <>
-          <div className="bg-gradient-to-br from-purple-500 to-purple-700 text-white p-6 rounded-lg shadow-xl border-2 border-purple-600">
-            <h4 className="text-xl font-bold mb-3">💡 Latest Suggestion</h4>
-            <p className="text-xl leading-relaxed">{ragResponse.suggestion || 'No suggestion'}</p>
-          </div>
+    <Card sx={{ height: '100%' }}>
+      <CardContent>
+        <Stack spacing={3}>
+          <Box
+            sx={{
+              p: 3,
+              borderRadius: 3,
+              background: 'linear-gradient(135deg, #1e1b3b 0%, #403c7b 100%)',
+              color: '#f8fafc',
+            }}
+          >
+            <Typography variant="subtitle2" sx={{ letterSpacing: 0.5 }}>
+              💡 Latest suggestion
+            </Typography>
+            <Typography variant="body1" sx={{ mt: 1 }}>
+              {ragResponse.suggestion || 'No suggestion available yet.'}
+            </Typography>
+          </Box>
 
           {ragResponse.alternatives && ragResponse.alternatives.length > 0 && (
-            <div className="bg-white p-5 rounded-lg border-2 border-gray-300 shadow-md">
-              <h5 className="font-bold text-gray-800 mb-3 text-lg">Alternatives:</h5>
-              <ul className="list-disc list-inside space-y-2 text-gray-700 text-base">
+            <Box>
+              <Typography variant="subtitle2" color="text.secondary">
+                Alternatives
+              </Typography>
+              <Stack
+                component="ol"
+                spacing={1}
+                sx={{
+                  mt: 1,
+                  pl: 3,
+                  color: 'text.primary',
+                }}
+              >
                 {ragResponse.alternatives.map((alt, index) => (
-                  <li key={index}>{alt}</li>
+                  <Typography component="li" key={index} variant="body2">
+                    {alt}
+                  </Typography>
                 ))}
-              </ul>
-            </div>
+              </Stack>
+            </Box>
           )}
 
-          <details className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
-            <summary className="cursor-pointer text-sm font-semibold text-gray-700">
-              🔍 Context
-            </summary>
-            <div className="mt-3 space-y-2 text-sm text-gray-600">
-              {(latestRAG.query_text || latestRAG.latest_utterance) && (
-                <p>
-                  <strong>Query:</strong>{' '}
-                  {(latestRAG.query_text || latestRAG.latest_utterance).length > 80
-                    ? `${(latestRAG.query_text || latestRAG.latest_utterance).substring(0, 80)}...`
-                    : (latestRAG.query_text || latestRAG.latest_utterance)}
-                </p>
-              )}
-              <p>
-                <strong>Retrieved:</strong> {ragResponse.retrieved_count || 0} similar conversations
-              </p>
-              {latestRAG.sentiment && (
-                <p>
-                  <strong>Sentiment:</strong> {latestRAG.sentiment.avg_score?.toFixed(2) || '0.00'}
-                </p>
-              )}
-              {latestRAG.window_start && latestRAG.window_end && (
-                <p className="text-xs text-gray-500">
-                  <strong>Window:</strong> {new Date(latestRAG.window_start).toLocaleTimeString()} - {new Date(latestRAG.window_end).toLocaleTimeString()}
-                </p>
-              )}
-            </div>
-          </details>
-        </>
-      ) : (
-        <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
-          <p className="text-blue-800">Waiting for suggestions...</p>
-          <p className="text-sm text-blue-600 mt-1">Suggestions appear every ~10 seconds after transcription</p>
-        </div>
-      )}
-    </div>
+          <Accordion sx={{ bgcolor: 'rgba(148, 163, 184, 0.08)', boxShadow: 'none' }}>
+            <AccordionSummary expandIcon={<ExpandMoreIcon sx={{ color: 'text.secondary' }} />}>
+              <Typography variant="body2" color="text.secondary">
+                🔍 Context
+              </Typography>
+            </AccordionSummary>
+            <AccordionDetails>
+              <Stack spacing={1}>
+                <Typography variant="caption" color="text.primary">
+                  <strong>Query:</strong> {contextSnippet}
+                </Typography>
+                <Typography variant="caption" color="text.primary">
+                  <strong>Retrieved:</strong> {ragResponse.retrieved_count || 0} similar conversations
+                </Typography>
+                {latestRAG.sentiment && (
+                  <Typography variant="caption" color="text.primary">
+                    <strong>Sentiment:</strong> {latestRAG.sentiment.avg_score?.toFixed(2) || '0.00'}
+                  </Typography>
+                )}
+                {latestRAG.window_start && latestRAG.window_end && (
+                  <Typography variant="caption" color="text.primary">
+                    <strong>Window:</strong>{' '}
+                    {new Date(latestRAG.window_start).toLocaleTimeString()} -{' '}
+                    {new Date(latestRAG.window_end).toLocaleTimeString()}
+                  </Typography>
+                )}
+              </Stack>
+            </AccordionDetails>
+          </Accordion>
+        </Stack>
+      </CardContent>
+    </Card>
   );
 }
 

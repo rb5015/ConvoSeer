@@ -1,46 +1,70 @@
 import { useEffect, useRef } from 'react';
+import { Box, Paper, Stack, Typography } from '@mui/material';
 
 export function TranscriptionWindow({ transcriptions }) {
   const scrollRef = useRef(null);
 
-  // Auto-scroll to bottom when new transcriptions arrive
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [transcriptions]);
 
-  const getSentimentClass = (sentiment) => {
+  const getSentimentColor = (sentiment) => {
     switch (sentiment) {
       case 'POS':
-        return 'border-l-green-500';
+        return '#22c55e';
       case 'NEG':
-        return 'border-l-red-500';
+        return '#f87171';
       default:
-        return 'border-l-orange-500';
+        return '#fbbf24';
     }
   };
 
   return (
-    <div className="bg-gray-50 border-2 border-gray-300 rounded-lg p-4 max-h-[300px] overflow-y-auto transcription-window" ref={scrollRef}>
-      {transcriptions.length > 0 ? (
-        transcriptions.map((trans, index) => (
-          <div
-            key={`${trans.utterance_id}-${index}`}
-            className={`p-3 my-2 border-l-4 bg-white rounded shadow-sm hover:shadow-md transition-shadow ${getSentimentClass(trans.sentiment)}`}
-          >
-            <strong className="text-gray-600">[{trans.timestamp}]</strong>{' '}
-            <span className="text-gray-800">{trans.text}</span>
-          </div>
-        ))
+    <Paper
+      className="transcription-scroll"
+      ref={scrollRef}
+      sx={{
+        p: 2,
+        maxHeight: 320,
+        overflowY: 'auto',
+        backgroundColor: 'background.paper',
+      }}
+    >
+      {transcriptions.length ? (
+        <Stack spacing={1}>
+          {transcriptions.map((trans, index) => (
+            <Box
+              key={`${trans.utterance_id}-${index}`}
+              sx={{
+                borderLeft: 4,
+                borderColor: getSentimentColor(trans.sentiment),
+                borderRadius: 2,
+                backgroundColor: 'rgba(148, 163, 184, 0.08)',
+                px: 2,
+                py: 1.5,
+              }}
+            >
+              <Typography variant="caption" color="text.secondary">
+                [{trans.timestamp || '—'}]
+              </Typography>
+              <Typography variant="body1" color="text.primary">
+                {trans.text}
+              </Typography>
+            </Box>
+          ))}
+        </Stack>
       ) : (
-        <div className="py-8 text-center text-gray-500">
-          No transcriptions yet. Start recording to begin.
-          <br />
-          <small>Transcriptions will appear here as audio is processed...</small>
-        </div>
+        <Box textAlign="center" py={6}>
+          <Typography variant="body2" color="text.secondary">
+            No transcriptions yet. Start recording to begin.
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            Transcriptions will appear here as audio is processed...
+          </Typography>
+        </Box>
       )}
-    </div>
+    </Paper>
   );
 }
-

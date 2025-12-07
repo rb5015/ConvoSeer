@@ -1,18 +1,33 @@
 import { useState, useEffect } from 'react';
+import axios from 'axios';
 import { useSSEStream } from './hooks/useSSEStream';
 import { AudioRecorder } from './components/AudioRecorder';
 import { TranscriptionWindow } from './components/TranscriptionWindow';
 import { SentimentPanel } from './components/SentimentPanel';
 import { RAGPanel } from './components/RAGPanel';
-import axios from 'axios';
+import {
+  Box,
+  Button,
+  Card,
+  CardContent,
+  CardHeader,
+  Chip,
+  Container,
+  Divider,
+  Grid,
+  Stack,
+  Typography,
+} from '@mui/material';
+import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 
 function App() {
   const [callId, setCallId] = useState(`call-${Math.floor(Date.now() / 1000)}`);
   const [isRecording, setIsRecording] = useState(false);
   const [backendStatus, setBackendStatus] = useState({ audio: false, stream: false });
   const [localTranscriptions, setLocalTranscriptions] = useState([]);
-  
-  // SSE stream hook
+
   const {
     transcriptions: sseTranscriptions,
     sentimentHistory,
@@ -22,40 +37,33 @@ function App() {
     clearData,
   } = useSSEStream(callId, isRecording);
 
-  // Combine local and SSE transcriptions, removing duplicates by utterance_id
   const allTranscriptionsMap = new Map();
-  
-  // Add local transcriptions first
-  localTranscriptions.forEach(trans => {
+  localTranscriptions.forEach((trans) => {
     if (trans.utterance_id) {
       allTranscriptionsMap.set(trans.utterance_id, trans);
     }
   });
-  
-  // Add SSE transcriptions (they may override local ones if same ID)
-  sseTranscriptions.forEach(trans => {
+  sseTranscriptions.forEach((trans) => {
     if (trans.utterance_id) {
       allTranscriptionsMap.set(trans.utterance_id, trans);
     }
   });
-  
-  // Convert to array and sort by index, then slice to last 100
+
   const allTranscriptions = Array.from(allTranscriptionsMap.values())
     .sort((a, b) => (a.index || 0) - (b.index || 0))
     .slice(-100);
 
-  // Check backend health
   useEffect(() => {
     const checkHealth = async () => {
       const audioServiceUrl = import.meta.env.VITE_AUDIO_SERVICE_URL || 'http://localhost:8004';
       const streamUrl = import.meta.env.VITE_STREAM_URL || 'http://localhost:8003';
-      
+
       try {
         const [audioRes, streamRes] = await Promise.all([
           axios.get(`${audioServiceUrl}/health`, { timeout: 2000 }),
           axios.get(`${streamUrl}/health`, { timeout: 2000 }),
         ]);
-        
+
         setBackendStatus({
           audio: audioRes.status === 200,
           stream: streamRes.status === 200,
@@ -66,12 +74,12 @@ function App() {
     };
 
     checkHealth();
-    const interval = setInterval(checkHealth, 10000); // Check every 10 seconds
+    const interval = setInterval(checkHealth, 10000);
     return () => clearInterval(interval);
   }, []);
 
   const handleTranscription = (transcription) => {
-    setLocalTranscriptions(prev => [...prev, transcription].slice(-100));
+    setLocalTranscriptions((prev) => [...prev, transcription].slice(-100));
   };
 
   const handleClear = () => {
@@ -79,126 +87,155 @@ function App() {
     clearData();
   };
 
-  const getStatusIndicator = () => {
+  const getStatusChipProps = () => {
     if (isRecording) {
-      return (
-        <div className="bg-red-500 text-white px-4 py-2 rounded-lg font-semibold pulse-animation">
-          🔴 RECORDING
-        </div>
-      );
-    } else if (backendStatus.audio && backendStatus.stream) {
-      return (
-        <div className="bg-green-500 text-white px-4 py-2 rounded-lg font-semibold">
-          ✅ Connected
-        </div>
-      );
-    } else {
-      return (
-        <div className="bg-gray-500 text-white px-4 py-2 rounded-lg font-semibold">
-          ⚪ Idle
-        </div>
-      );
+      return {
+        label: 'Recording',
+        color: 'error',
+        icon: <FiberManualRecordIcon fontSize="small" />,
+        sx: { animation: 'pulse 1.6s infinite' },
+      };
     }
+
+    if (backendStatus.audio && backendStatus.stream) {
+      return {
+        label: 'Connected',
+        color: 'success',
+        icon: <CheckCircleIcon fontSize="small" />,
+      };
+    }
+
+    return {
+      label: 'Idle',
+      color: 'warning',
+      icon: <WarningAmberIcon fontSize="small" />,
+    };
   };
 
   return (
-    <div className="min-h-screen bg-gray-100">
-      {/* Header */}
-      <div className="bg-white shadow-sm border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-6 py-4">
-          <h1 className="text-3xl font-bold bg-gradient-to-r from-purple-500 to-purple-700 bg-clip-text text-transparent mb-4">
-            🎙️ Agent Assist - Live Streaming
-          </h1>
-          
-          {/* Top bar */}
-          <div className="grid grid-cols-4 gap-4 items-center">
-            <div className="col-span-2">
-              <input
-                type="text"
-                value={callId}
-                onChange={(e) => setCallId(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                placeholder="Call ID"
+    <Box sx={{ minHeight: '100vh', bgcolor: 'background.default', color: 'text.primary' }}>
+      <Box
+        component="section"
+        sx={{
+          bgcolor: 'primary.main',
+          borderBottom: 1,
+          borderColor: 'divider',
+          py: { xs: 4, md: 5 },
+          boxShadow: '0 20px 35px rgba(2, 6, 23, 0.65)',
+        }}
+      >
+        <Container maxWidth="lg">
+          <Stack direction="row" alignItems="flex-start" justifyContent="space-between" spacing={4}>
+            <Box>
+              <Typography variant="h2" color="text.secondary" sx={{ fontWeight: 700, letterSpacing: 0.5 }}>
+                ConvoSeer
+              </Typography>
+              <Typography variant="body2" color="grey" fontWeight="bold" sx={{ mt: 1 }}>
+                Real-time audio intelligence with unified status, sentiment, and contextual recommendations.
+              </Typography>
+            </Box>
+
+            <Stack direction="row" spacing={2} alignItems="center" justifyContent="flex-end">
+              <Chip {...getStatusChipProps()} />
+              <Stack direction="row" spacing={1} alignItems="center">
+                <Typography variant="body2" color="text.secondary">
+                  Utterances
+                </Typography>
+                <Typography variant="h6" sx={{ letterSpacing: 0.5 }}>
+                  {allTranscriptions.length}
+                </Typography>
+              </Stack>
+              <Button variant="outlined" color="secondary" onClick={handleClear}>
+                🔄 Clear feed
+              </Button>
+            </Stack>
+          </Stack>
+        </Container>
+      </Box>
+
+      <Container maxWidth="lg" sx={{ py: { xs: 4, md: 8 } }}>
+        <Grid container spacing={4}>
+          <Grid item xs={12} lg={5}>
+            <Card>
+              <CardHeader
+                title="Live Transcript"
+                subheader="Capture audio and preview the latest utterances below."
+                titleTypographyProps={{ variant: 'h5', fontWeight: 600 }}
+                subheaderTypographyProps={{ color: 'text.secondary' }}
               />
-            </div>
-            <div>
-              {getStatusIndicator()}
-            </div>
-            <div className="flex items-center gap-4">
-              <div className="text-sm text-gray-600">
-                Utterances: <span className="font-semibold">{allTranscriptions.length}</span>
-              </div>
-              <button
-                onClick={handleClear}
-                className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-lg font-semibold transition-colors"
-              >
-                🔄 Clear
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
+              <CardContent>
+                <Stack spacing={3}>
+                  <AudioRecorder
+                    callId={callId}
+                    onTranscription={handleTranscription}
+                    onRecordingChange={setIsRecording}
+                  />
+                  <Divider />
+                  <TranscriptionWindow transcriptions={allTranscriptions} />
+                </Stack>
+              </CardContent>
+            </Card>
+          </Grid>
 
-      {/* Main content */}
-      <div className="max-w-7xl mx-auto px-6 py-6">
-        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
-          {/* Left column - Transcription (smaller) */}
-          <div className="lg:col-span-2 space-y-4">
-            <h2 className="text-lg font-semibold text-gray-700">📝 Live Transcription</h2>
-            
-            <AudioRecorder 
-              callId={callId} 
-              onTranscription={handleTranscription}
-              onRecordingChange={setIsRecording}
-            />
-            
-            <TranscriptionWindow transcriptions={allTranscriptions} />
-          </div>
+          <Grid item xs={12} lg={7}>
+            <Grid container spacing={3}>
+              <Grid item xs={12} md={6}>
+                <SentimentPanel sentimentHistory={sentimentHistory} />
+              </Grid>
+              <Grid item xs={12} md={6}>
+                <RAGPanel ragSuggestions={ragSuggestions} />
+              </Grid>
+            </Grid>
+          </Grid>
+        </Grid>
+      </Container>
 
-          {/* Right columns - Sentiment and RAG (larger, side by side) */}
-          <div className="lg:col-span-3 grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="space-y-4">
-              <h2 className="text-2xl font-bold text-gray-900 mb-4">📊 Sentiment Analysis</h2>
-              <SentimentPanel sentimentHistory={sentimentHistory} />
-            </div>
-
-            <div className="space-y-4">
-              <h2 className="text-2xl font-bold text-gray-900 mb-4">🤖 Agent Suggestions</h2>
-              <RAGPanel ragSuggestions={ragSuggestions} />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Footer */}
-      <div className="mt-8 border-t border-gray-200 bg-white">
-        <div className="max-w-7xl mx-auto px-6 py-4">
-          <div className="grid grid-cols-3 gap-4 text-sm">
-            <div>
-              <strong>Audio Service:</strong>{' '}
-              <span className={backendStatus.audio ? 'text-green-600' : 'text-red-600'}>
-                {backendStatus.audio ? '✅' : '❌'}
-              </span>
-            </div>
-            <div>
-              <strong>Stream Service:</strong>{' '}
-              <span className={backendStatus.stream ? 'text-green-600' : 'text-red-600'}>
-                {backendStatus.stream ? '✅' : '❌'}
-              </span>
+      <Box
+        component="footer"
+        sx={{
+          borderTop: 1,
+          borderColor: 'divider',
+          py: 4,
+          bgcolor: 'background.paper',
+          mt: 6,
+        }}
+      >
+        <Container maxWidth="lg">
+          <Stack
+            direction={{ xs: 'column', sm: 'row' }}
+            spacing={2}
+            justifyContent="space-between"
+            alignItems="center"
+          >
+            <Stack direction="row" spacing={1} alignItems="center">
+              <Typography variant="body2">Audio Service</Typography>
+              <Typography variant="body2" color={backendStatus.audio ? 'success.main' : 'error.main'}>
+                {backendStatus.audio ? '✔️ Healthy' : '⚠️ Offline'}
+              </Typography>
+            </Stack>
+            <Stack direction="row" spacing={1} alignItems="center">
+              <Typography variant="body2">Stream Service</Typography>
+              <Typography variant="body2" color={backendStatus.stream ? 'success.main' : 'error.main'}>
+                {backendStatus.stream ? '✔️ Healthy' : '⚠️ Offline'}
+              </Typography>
               {streamConnected && (
-                <span className="ml-2 text-green-600">(Connected)</span>
+                <Typography variant="body2" color="success.main">
+                  (Listening)
+                </Typography>
               )}
               {streamError && (
-                <span className="ml-2 text-yellow-600">({streamError})</span>
+                <Typography variant="body2" color="warning.main">
+                  ({streamError})
+                </Typography>
               )}
-            </div>
-            <div>
-              <strong>Call ID:</strong> {callId}
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+            </Stack>
+            <Typography variant="body2">
+              Call ID: <strong>{callId}</strong>
+            </Typography>
+          </Stack>
+        </Container>
+      </Box>
+    </Box>
   );
 }
 
