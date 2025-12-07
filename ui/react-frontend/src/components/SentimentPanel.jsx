@@ -24,17 +24,17 @@ export function SentimentPanel({ sentimentHistory }) {
     <div className="space-y-4">
       {latestSentiment ? (
         <>
-          <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-gray-600">Current Sentiment</span>
+          <div className="bg-white p-6 rounded-lg border-2 border-gray-300 shadow-md">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-base font-semibold text-gray-700">Current Sentiment</span>
               <span
-                className="px-3 py-1 rounded text-white font-semibold"
+                className="px-4 py-2 rounded-lg text-white font-bold text-lg"
                 style={{ backgroundColor: getSentimentColor(latestSentiment.avg_sentiment_score) }}
               >
                 {getSentimentLabel(latestSentiment.avg_sentiment_score)}
               </span>
             </div>
-            <div className="mt-2 text-2xl font-bold" style={{ color: getSentimentColor(latestSentiment.avg_sentiment_score) }}>
+            <div className="mt-3 text-4xl font-bold" style={{ color: getSentimentColor(latestSentiment.avg_sentiment_score) }}>
               {latestSentiment.avg_sentiment_score > 0 ? '+' : ''}
               {latestSentiment.avg_sentiment_score.toFixed(2)}
             </div>
@@ -43,7 +43,7 @@ export function SentimentPanel({ sentimentHistory }) {
           {chartData.length > 1 && (
             <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
               <h4 className="text-sm font-semibold text-gray-700 mb-3">Sentiment Trend</h4>
-              <ResponsiveContainer width="100%" height={200}>
+              <ResponsiveContainer width="100%" height={280}>
                 <LineChart data={chartData}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="time" />

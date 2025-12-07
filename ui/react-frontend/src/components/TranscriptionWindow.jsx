@@ -22,7 +22,7 @@ export function TranscriptionWindow({ transcriptions }) {
   };
 
   return (
-    <div className="bg-gray-50 border-2 border-gray-300 rounded-lg p-4 max-h-[450px] overflow-y-auto transcription-window" ref={scrollRef}>
+    <div className="bg-gray-50 border-2 border-gray-300 rounded-lg p-4 max-h-[300px] overflow-y-auto transcription-window" ref={scrollRef}>
       {transcriptions.length > 0 ? (
         transcriptions.map((trans, index) => (
           <div

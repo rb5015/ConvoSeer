@@ -6,15 +6,15 @@ export function RAGPanel({ ragSuggestions }) {
     <div className="space-y-4">
       {latestRAG ? (
         <>
-          <div className="bg-gradient-to-br from-purple-500 to-purple-700 text-white p-6 rounded-lg shadow-lg">
-            <h4 className="text-lg font-semibold mb-2">💡 Latest Suggestion</h4>
-            <p className="text-lg">{ragResponse.suggestion || 'No suggestion'}</p>
+          <div className="bg-gradient-to-br from-purple-500 to-purple-700 text-white p-6 rounded-lg shadow-xl border-2 border-purple-600">
+            <h4 className="text-xl font-bold mb-3">💡 Latest Suggestion</h4>
+            <p className="text-xl leading-relaxed">{ragResponse.suggestion || 'No suggestion'}</p>
           </div>
 
           {ragResponse.alternatives && ragResponse.alternatives.length > 0 && (
-            <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
-              <h5 className="font-semibold text-gray-700 mb-2">Alternatives:</h5>
-              <ul className="list-disc list-inside space-y-1 text-gray-600">
+            <div className="bg-white p-5 rounded-lg border-2 border-gray-300 shadow-md">
+              <h5 className="font-bold text-gray-800 mb-3 text-lg">Alternatives:</h5>
+              <ul className="list-disc list-inside space-y-2 text-gray-700 text-base">
                 {ragResponse.alternatives.map((alt, index) => (
                   <li key={index}>{alt}</li>
                 ))}

@@ -141,10 +141,10 @@ function App() {
 
       {/* Main content */}
       <div className="max-w-7xl mx-auto px-6 py-6">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left column - Transcription */}
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+          {/* Left column - Transcription (smaller) */}
           <div className="lg:col-span-2 space-y-4">
-            <h2 className="text-xl font-semibold text-gray-800">📝 Live Transcription</h2>
+            <h2 className="text-lg font-semibold text-gray-700">📝 Live Transcription</h2>
             
             <AudioRecorder 
               callId={callId} 
@@ -155,15 +155,15 @@ function App() {
             <TranscriptionWindow transcriptions={allTranscriptions} />
           </div>
 
-          {/* Right columns - Sentiment and RAG */}
-          <div className="space-y-6">
-            <div>
-              <h2 className="text-xl font-semibold text-gray-800 mb-4">📊 Sentiment Analysis</h2>
+          {/* Right columns - Sentiment and RAG (larger, side by side) */}
+          <div className="lg:col-span-3 grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="space-y-4">
+              <h2 className="text-2xl font-bold text-gray-900 mb-4">📊 Sentiment Analysis</h2>
               <SentimentPanel sentimentHistory={sentimentHistory} />
             </div>
 
-            <div>
-              <h2 className="text-xl font-semibold text-gray-800 mb-4">🤖 Agent Suggestions</h2>
+            <div className="space-y-4">
+              <h2 className="text-2xl font-bold text-gray-900 mb-4">🤖 Agent Suggestions</h2>
               <RAGPanel ragSuggestions={ragSuggestions} />
             </div>
           </div>
