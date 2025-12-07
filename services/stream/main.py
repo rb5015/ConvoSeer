@@ -25,7 +25,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-KAFKA_BROKERS = os.getenv("KAFKA_BROKERS", "localhost:9092")
+KAFKA_BROKERS = os.getenv("KAFKA_BROKERS", "kafka:29092")
 SENTIMENT_TOPIC = os.getenv("KAFKA_TOPIC_SENTIMENT", "calls.sentiment")
 RAG_TOPIC = os.getenv("KAFKA_TOPIC_RAG", "calls.rag")
 ENRICHED_TOPIC = os.getenv("KAFKA_TOPIC_ENRICHED", "calls.enriched")
