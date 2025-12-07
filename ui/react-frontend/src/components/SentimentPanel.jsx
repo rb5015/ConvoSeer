@@ -7,14 +7,14 @@ export function SentimentPanel({ sentimentHistory }) {
   const latestSentiment = sentimentHistory[sentimentHistory.length - 1];
 
   const getSentimentLabel = (score) => {
-    if (score > 0.2) return 'Positive';
-    if (score < -0.2) return 'Negative';
+    if (score > 0.1) return 'Positive';
+    if (score < -0.1) return 'Negative';
     return 'Neutral';
   };
 
   const getSentimentColor = (score) => {
-    if (score > 0.2) return '#22c55e';
-    if (score < -0.2) return '#f87171';
+    if (score > 0.1) return '#22c55e';
+    if (score < -0.1) return '#f87171';
     return '#fbbf24';
   };
 

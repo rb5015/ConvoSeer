@@ -371,6 +371,10 @@ async def combined_event_generator(call_id: str) -> AsyncGenerator[str, None]:
         f"RAG: {list(rag_queues.keys())}"
     )
 
+    # For keepalives
+    last_keepalive = time.time()
+    KEEPALIVE_INTERVAL = 30  # seconds
+
     try:
         # Cached RAG
         cached_rag = recent_rag_messages.get(call_id, [])
@@ -393,45 +397,58 @@ async def combined_event_generator(call_id: str) -> AsyncGenerator[str, None]:
         while True:
             has_data = False
 
-            # Transcription
-            try:
-                data = transcription_q.get_nowait()
+            # Drain ALL available transcription messages
+            while True:
+                try:
+                    data = transcription_q.get_nowait()
+                except queue.Empty:
+                    break
                 event_data = json.dumps(data)
                 print(f"📤 Sending Transcription SSE event to call_id: {call_id}")
                 yield f"event: transcription\ndata: {event_data}\n\n"
                 has_data = True
-            except queue.Empty:
-                pass
 
-            # Sentiment
-            try:
-                data = sentiment_q.get_nowait()
+            # Drain ALL available sentiment messages
+            while True:
+                try:
+                    data = sentiment_q.get_nowait()
+                except queue.Empty:
+                    break
                 event_data = json.dumps(data)
                 print(f"📤 Sending Sentiment SSE event to call_id: {call_id}")
                 yield f"event: sentiment\ndata: {event_data}\n\n"
                 has_data = True
-            except queue.Empty:
-                pass
 
-            # RAG
-            try:
-                data = rag_q.get_nowait()
+            # Drain ALL available RAG messages
+            while True:
+                try:
+                    data = rag_q.get_nowait()
+                except queue.Empty:
+                    break
                 event_data = json.dumps(data)
                 print(f"📤 Sending RAG SSE event to call_id: {call_id}")
                 yield f"event: rag\ndata: {event_data}\n\n"
                 has_data = True
-            except queue.Empty:
-                pass
+
+            now = time.time()
 
             if not has_data:
-                await asyncio.sleep(30)
-                yield f": keepalive\n\n"
-            else:
+                # No data this tick → maybe send keepalive
+                if now - last_keepalive > KEEPALIVE_INTERVAL:
+                    yield f": keepalive\n\n"
+                    last_keepalive = now
+                # Small sleep to avoid busy loop, but NOT 30s
                 await asyncio.sleep(0.1)
+            else:
+                # We just sent events, tiny pause to let the client breathe
+                await asyncio.sleep(0.05)
+
     finally:
         sentiment_queues.pop(call_id, None)
         rag_queues.pop(call_id, None)
         transcription_queues.pop(call_id, None)
+        print(f"🔌 SSE Combined connection closed for call_id: {call_id}")
+
 
 
 # ---------------------------------------------------------------------------
